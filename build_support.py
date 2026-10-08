@@ -27,7 +27,7 @@ def resource_files(root):
 
 DISTRIBUTION_DOCUMENTS = (
     "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "DATA_PROVENANCE.md",
-    "docs/BOINC.md", "boinc/job.xml", "boinc/workunit.sample.json",
+    "docs/BOINC.md", "docs/BOINC_CPU.md", "boinc/job.xml", "boinc/workunit.sample.json",
     "boinc/input_template.xml", "boinc/output_template.xml",
     "boinc/validate_result.py", "boinc/test_validate_result.py",
 )

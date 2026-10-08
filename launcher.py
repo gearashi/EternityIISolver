@@ -42,6 +42,7 @@ def parser():
     validate.add_argument('board_json', nargs='?', type=Path)
     commands.add_parser('diagnose', help='Run bounded GPU correctness diagnostics; diagnose --help lists options')
     commands.add_parser('boinc', help='Run an experimental bounded BOINC workunit; boinc --help lists options')
+    commands.add_parser('inspect-cpu', help='Read CPU workunit inputs and ticket IDs without running a search')
     return result
 
 
@@ -155,6 +156,9 @@ def main(argv=None):
     if argv and argv[0] == 'boinc':
         from boinc_worker import main as batch
         return batch(argv[1:])
+    if argv and argv[0] == 'inspect-cpu':
+        from boinc_cpu_workunit import main as inspect_cpu
+        return inspect_cpu(argv[1:])
     args = parser().parse_args(argv or ['open'])
     try:
         if args.command == 'validate':

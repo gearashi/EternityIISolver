@@ -89,7 +89,7 @@ def main():
             if not report.get("valid") or report.get("score") != 466:
                 raise RuntimeError(f"Frozen resource validation failed: {report}")
             subprocess.run([str(executable), "status", "--json", "--state-dir", temporary], cwd=temporary, check=True, timeout=30)
-            for command in ("diagnose", "boinc"):
+            for command in ("diagnose", "boinc", "inspect-cpu"):
                 subprocess.run([str(executable), command, "--help"], cwd=temporary,
                                capture_output=True, text=True, check=True, timeout=30)
     # Top-level readable documentation accompanies the app and its dependency notices.

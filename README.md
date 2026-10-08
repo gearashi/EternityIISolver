@@ -80,6 +80,8 @@ Use a command's `--state-dir PATH` option or the `ETERNITY_SOLVER_HOME` environm
 
 The library initially loads its public metadata index, then downloads full board arrangements gradually, highest scores first, at approximately one request per second. Indexed records are **not** fully cached arrangements. Duplicate detection uses exact cached placements; when the relevant score tier is incomplete, novelty remains unknown. Being absent from a cached index snapshot is not a claim of worldwide novelty. Normal desktop search does not submit results to BOINC. The separate [experimental BOINC wrapper adapter](docs/BOINC.md) accepts bounded workunits, writes checkpoint/progress files and independently checked results; project-side deployment still requires team testing.
 
+The development [CPU workunit inspector](docs/BOINC_CPU.md) reads existing Eternity@Home assignments, checks their starting roots, and enumerates original ticket IDs without running a search. It is a foundation for CPU-compatible DFS integration; a compatible GPU DFS worker is not implemented yet.
+
 ## Search and validation
 
 The GPU evaluates swaps and rotations across many replicas, uses temperature schedules to escape local optima, and periodically reseeds part of the population. The CPU independently verifies each promoted improvement against every piece, all 480 internal adjacencies, the gray frame, and the five fixed clue states. A legal partial arrangement is not a solved board: the validator's `complete` field requires 480 matched edges.
@@ -91,7 +93,7 @@ The imported 466 board is credited to its public source, not presented as a disc
 CPU tests require no GPU and do not start a continuous search:
 
 ```sh
-python -m unittest test_validator test_library_cache test_lifecycle test_gpu_backends test_boinc_worker -v
+python -m unittest test_validator test_library_cache test_lifecycle test_gpu_backends test_boinc_worker test_boinc_cpu_workunit -v
 python -m unittest discover -s boinc -p "test_*.py" -v
 python launcher.py validate
 ```

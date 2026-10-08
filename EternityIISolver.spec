@@ -21,7 +21,7 @@ if not (metadata_dir / "BUILD_INFO.json").is_file():
     raise RuntimeError("Run python scripts/build_release.py instead of invoking the spec directly")
 datas.append((str(metadata_dir), "."))
 binaries = []
-hiddenimports = ["graphlib", "launcher", "app_paths", "process_control", "dashboard_server", "solver", "gpu_engine", "gpu_backends", "kernel_port", "validator", "library_cache", "test_gpu", "boinc_worker"]
+hiddenimports = ["graphlib", "launcher", "app_paths", "process_control", "dashboard_server", "solver", "gpu_engine", "gpu_backends", "kernel_port", "validator", "library_cache", "test_gpu", "boinc_worker", "boinc_cpu_workunit"]
 
 def include_package(name):
     package_data, package_binaries, package_imports = collect_all(name, filter_submodules=lambda value: ".tests" not in value and ".testing" not in value)

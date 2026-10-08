@@ -1,5 +1,7 @@
 # Experimental BOINC integration
 
+For inspection of existing Eternity@Home CPU workunits, see [CPU DFS compatibility](BOINC_CPU.md). That inspector preserves ticket identities but does not run or certify the production DFS. The worker below uses a separate stochastic-search contract.
+
 This repository provides a headless, bounded GPU worker and BOINC wrapper examples for the Eternity@Home team to evaluate. It does **not** install an application on the project server, submit results, or replace an existing BOINC application. A real BOINC client/server deployment has not yet been certified by this repository's tests.
 
 The scheduled adapter currently supports an explicitly allocated **NVIDIA CUDA device on Windows or Linux**. The desktop solver also supports OpenCL, including compatible AMD, Intel, and Mac GPUs, but the BOINC adapter refuses scheduled OpenCL work until an allocation bridge is implemented. `--standalone-diagnostic` permits local OpenCL experiments; it must not be used to bypass scheduled device allocation.
