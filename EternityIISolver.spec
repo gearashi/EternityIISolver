@@ -9,19 +9,19 @@ from PyInstaller.utils.hooks import collect_all, copy_metadata
 
 root = Path(SPECPATH).resolve()
 sys.path.insert(0, str(root))
-from build_support import resource_files
+from build_support import resource_files, documentation_files
 
 with_cuda = os.environ.get("ETERNITY_BUILD_CUDA", "0") == "1"
 if with_cuda and sys.platform == "darwin":
     raise RuntimeError("The macOS build uses OpenCL; CUDA wheels are not available for macOS")
 datas = [(str(source), str(Path(relative).parent)) for relative, source in resource_files(root)]
-datas += [(str(root / name), ".") for name in ("LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "DATA_PROVENANCE.md")]
+datas += [(str(source), str(Path(relative).parent)) for relative, source in documentation_files(root)]
 metadata_dir = root / "build" / "release-metadata"
 if not (metadata_dir / "BUILD_INFO.json").is_file():
     raise RuntimeError("Run python scripts/build_release.py instead of invoking the spec directly")
 datas.append((str(metadata_dir), "."))
 binaries = []
-hiddenimports = ["launcher", "app_paths", "process_control", "dashboard_server", "solver", "gpu_engine", "gpu_backends", "kernel_port", "validator", "library_cache"]
+hiddenimports = ["graphlib", "launcher", "app_paths", "process_control", "dashboard_server", "solver", "gpu_engine", "gpu_backends", "kernel_port", "validator", "library_cache", "test_gpu", "boinc_worker"]
 
 def include_package(name):
     package_data, package_binaries, package_imports = collect_all(name, filter_submodules=lambda value: ".tests" not in value and ".testing" not in value)

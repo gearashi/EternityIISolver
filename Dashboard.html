@@ -37,13 +37,13 @@ function renderStatus(s,isLive){
  const score=Number(s.best_score),source=Number(s.source_best_score??466);
  $('score').textContent=Number.isFinite(score)?score:'—';$('sourceScore').textContent=`${source} / 480`;
  $('recordLabel').textContent=score>source?'Improved verified record':score===source?'Imported source record':'Verified candidate';
- $('throughput').textContent=isLive?compact(s.moves_per_second):'—';$('replicas').textContent=count(s.replicas);$('elapsed').textContent=elapsed(s.elapsed_seconds);
+ $('throughput').textContent=isLive?(s.state==='running'?compact(s.moves_per_second):s.state==='starting'?'—':'0'):'—';$('replicas').textContent=count(s.replicas);$('elapsed').textContent=elapsed(s.elapsed_seconds);
  const date=new Date(s.last_update);$('updated').textContent=Number.isNaN(date.getTime())?'No update yet':`Updated ${date.toLocaleTimeString()}`;
  for(const [id,key] of [['proposed','proposed_moves'],['accepted','accepted_moves'],['duplicates','duplicate_results'],['novel','new_results'],['pending','pending_novelty_checks']])$(''+id).textContent=count(s[key]);
  const library=s.library||{},total=Number(library.indexed_boards),cached=Number(library.cached_geometries);
  $('indexed').textContent=count(library.indexed_boards);$('cached').textContent=count(library.cached_geometries);$('known').textContent=count(library.known_exact_boards);
  const fraction=Number.isFinite(total)&&total>0&&Number.isFinite(cached)?Math.max(0,Math.min(1,cached/total)):0;
- $('cacheBar').style.width=(100*fraction)+'%';$('cacheBadge').textContent=library.enabled===false?'Disabled':library.geometry_cache_complete?'Cached':library.full_metadata_loaded?'Caching boards':'Loading index';
+ $('cacheBar').style.width=(100*fraction)+'%';$('cacheBadge').textContent=library.enabled===false?'Disabled':library.running===false?'Paused':library.geometry_cache_complete?'Cached':library.full_metadata_loaded?'Caching boards':'Loading index';
  $('cacheText').textContent=library.enabled===false?'Library synchronization is disabled.':Number.isFinite(total)?`${count(cached)} of ${count(total)} arrangements cached (${(100*fraction).toFixed(2)}%).`:'Waiting for library metadata.';
  $('libraryDetails').textContent=JSON.stringify(library,null,2);
  const active=s.can_start===false||['starting','running','stopping'].includes(s.state);

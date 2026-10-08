@@ -40,6 +40,8 @@ def parser():
             command.add_argument('--json', action='store_true')
     validate = commands.add_parser('validate', help='Independently check a saved board (default: bundled source)')
     validate.add_argument('board_json', nargs='?', type=Path)
+    commands.add_parser('diagnose', help='Run bounded GPU correctness diagnostics; diagnose --help lists options')
+    commands.add_parser('boinc', help='Run an experimental bounded BOINC workunit; boinc --help lists options')
     return result
 
 
@@ -147,6 +149,12 @@ def stop(home):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'diagnose':
+        from test_gpu import main as diagnose
+        return diagnose(argv[1:]) or 0
+    if argv and argv[0] == 'boinc':
+        from boinc_worker import main as batch
+        return batch(argv[1:])
     args = parser().parse_args(argv or ['open'])
     try:
         if args.command == 'validate':

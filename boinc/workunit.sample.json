@@ -1,0 +1,11 @@
+{
+  "schema": "eternity-gpu-workunit/v1",
+  "workunit_id": "gpu-preflight-000001",
+  "pieces_sha256": "1f0ec5db754c3ac94b95656f303745b85347c14adff33a0fda8f762ca79024ae",
+  "backend": "cuda",
+  "replicas": 32,
+  "seed": 20261008,
+  "steps_per_replica": 1000,
+  "encoding": "4*(piece_id-1)+clockwise_rotation",
+  "board_order": "row-major"
+}

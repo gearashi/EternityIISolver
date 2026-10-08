@@ -17,7 +17,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from build_support import resource_files
+from build_support import resource_files, documentation_files
 
 def sha256(path):
     result = hashlib.sha256()
@@ -56,6 +56,7 @@ def write_metadata(flavor, version):
         "system": platform.system(), "architecture": platform.machine(),
         "python_version": platform.python_version(), "distributions": versions,
         "public_resources": [{"path": relative, "sha256": sha256(source)} for relative, source in resource_files(ROOT)],
+        "documentation": [{"path": relative, "sha256": sha256(source)} for relative, source in documentation_files(ROOT)],
         "hardware_validation": "Packaging and CPU validation do not certify a GPU/driver. See release test reports.",
         "private_runtime_data_included": False}
     (destination / "BUILD_INFO.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -82,10 +83,15 @@ def main():
             if not report.get("valid") or report.get("score") != 466:
                 raise RuntimeError(f"Frozen resource validation failed: {report}")
             subprocess.run([str(executable), "status", "--json", "--state-dir", temporary], cwd=temporary, check=True, timeout=30)
+            for command in ("diagnose", "boinc"):
+                subprocess.run([str(executable), command, "--help"], cwd=temporary,
+                               capture_output=True, text=True, check=True, timeout=30)
     # Top-level readable documentation accompanies the app and its dependency notices.
     if sys.platform != "darwin":
-        for name in ("README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "DATA_PROVENANCE.md"):
-            shutil.copyfile(ROOT / name, app / name)
+        for relative, source in documentation_files(ROOT):
+            destination = app / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
     system = {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
     architecture = {"AMD64": "x64", "x86_64": "x64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine(), platform.machine())
     release = ROOT / "release-assets"

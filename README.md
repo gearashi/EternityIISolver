@@ -33,6 +33,7 @@ EternityIISolver stop
 EternityIISolver status --json
 EternityIISolver validate
 EternityIISolver validate saved-board.json
+EternityIISolver diagnose --backend opencl --replicas 128
 ```
 
 `open` and the default no-argument launch open the persistent local dashboard. `start` additionally starts the worker. `run` runs the worker in the foreground; `--seconds 60` makes it bounded, otherwise it continues until stopped, an error occurs, or a validated solution is found. `--no-library` disables public-library synchronization. `--no-browser` is available with `start`. Use `--help` on a command for its options.
@@ -77,7 +78,7 @@ Application resources are read-only. Runtime state is stored separately:
 
 Use a command's `--state-dir PATH` option or the `ETERNITY_SOLVER_HOME` environment variable to choose another directory. Keep the state directory if you want to retain checkpoints and the board cache across upgrades. Dashboard/worker logs, current status, checkpoints, the library cache, and verified results live there; they are not written into the app bundle. The solver restores compatible checkpoints and validates them before use.
 
-The library initially loads its public metadata index, then downloads full board arrangements gradually, highest scores first, at approximately one request per second. Indexed records are **not** fully cached arrangements. Duplicate detection uses exact cached placements; when the relevant score tier is incomplete, novelty remains unknown. Being absent from a cached index snapshot is not a claim of worldwide novelty. The application does not submit results to BOINC.
+The library initially loads its public metadata index, then downloads full board arrangements gradually, highest scores first, at approximately one request per second. Indexed records are **not** fully cached arrangements. Duplicate detection uses exact cached placements; when the relevant score tier is incomplete, novelty remains unknown. Being absent from a cached index snapshot is not a claim of worldwide novelty. Normal desktop search does not submit results to BOINC. The separate [experimental BOINC wrapper adapter](docs/BOINC.md) accepts bounded workunits, writes checkpoint/progress files and independently checked results; project-side deployment still requires team testing.
 
 ## Search and validation
 
@@ -90,7 +91,8 @@ The imported 466 board is credited to its public source, not presented as a disc
 CPU tests require no GPU and do not start a continuous search:
 
 ```sh
-python -m unittest test_validator test_library_cache test_lifecycle test_gpu_backends -v
+python -m unittest test_validator test_library_cache test_lifecycle test_gpu_backends test_boinc_worker -v
+python -m unittest discover -s boinc -p "test_*.py" -v
 python launcher.py validate
 ```
 
@@ -101,7 +103,7 @@ python test_gpu.py --backend cuda --replicas 128 --output cuda-test.json
 python test_gpu.py --backend opencl --replicas 128 --output opencl-test.json
 ```
 
-Initial diagnostics passed on an NVIDIA RTX 2060 through both CUDA and OpenCL, covering score and adjacent-move deltas, legal states, inverse maps, reseeding, checkpoint/resume, and adaptation. AMD, Intel, and Apple GPU hardware has not been tested locally. The Linux CI diagnostic uses `--allow-opencl-cpu` with PoCL solely to verify the OpenCL code path; it is not a GPU performance test.
+Initial diagnostics passed on an NVIDIA RTX 2060 through both CUDA and OpenCL, covering score and adjacent-move deltas, legal states, inverse maps, reseeding, checkpoint/resume, and adaptation. AMD, Intel, and Apple GPU hardware has not been tested locally. The Linux CI diagnostics exercise both source and frozen executables using `--allow-opencl-cpu` with PoCL solely to verify the OpenCL code path; it is not a GPU performance test.
 
 Native build commands:
 
@@ -114,7 +116,7 @@ python scripts/build_release.py --flavor cuda-opencl
 python scripts/build_release.py --flavor opencl
 ```
 
-Build on the target operating system and architecture; PyInstaller does not cross-compile these archives. Each build validates the bundled 466 board and reads status from the frozen executable before archiving. `release-assets/` receives the native archive and its SHA-256 file. To build Python packages, run `python -m build`; `scripts/check_wheel.py` checks that a wheel contains the curated resources and excludes runtime data.
+Build on the target operating system and architecture; PyInstaller does not cross-compile these archives. Each build validates the bundled 466 board, reads status and loads the diagnostic/BOINC command help from the frozen executable before archiving. `release-assets/` receives the native archive and its SHA-256 file. To build Python packages, run `python -m build`; `scripts/check_wheel.py` checks that a wheel contains the curated resources and excludes runtime data.
 
 GitHub Actions builds Windows x64, Linux x64, macOS Intel, and macOS ARM separately. Branch/PR runs expose downloadable workflow artifacts. A pushed version tag such as `v0.1.0` must match `pyproject.toml`; after every build succeeds, the workflow publishes the native archives, Python wheel/source archive, and checksums to a GitHub release. A built package and a successful CPU smoke test do not establish compatibility with every GPU or driver.
 

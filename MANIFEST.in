@@ -13,6 +13,9 @@ include data/seeds/1c7be6e4cb9cb670c051061080e3cce00e1d480dd5e49a3e453d1986f65ed
 include data/seeds/157343be327ea2003cf611ce97b5c3eafc343648880c3872707a25ed0285c108.json
 include data/seeds/11edaf64885d797b6ddb5e3f05e2526648f70ac896dec29f9ffd85d4e1ed982b.json
 recursive-include scripts *.py
+include docs/BOINC.md
+include boinc/job.xml boinc/workunit.sample.json boinc/input_template.xml boinc/output_template.xml
+include boinc/validate_result.py boinc/test_validate_result.py
 recursive-include .github *.yml *.md
 prune runtime
 prune library

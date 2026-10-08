@@ -2,6 +2,7 @@
 import argparse
 from pathlib import Path
 import sys
+import tomllib
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,9 +15,11 @@ args = parser.parse_args()
 with zipfile.ZipFile(args.wheel) as archive:
     names = set(archive.namelist())
     expected = {"eternity_resources/" + name for name in PUBLIC_RESOURCES}
-    missing = sorted(expected - names)
+    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    modules = {name + ".py" for name in metadata["tool"]["setuptools"]["py-modules"]}
+    missing = sorted((expected | modules) - names)
     if missing:
-        raise SystemExit("Wheel resources missing: " + ", ".join(missing))
+        raise SystemExit("Wheel resources/modules missing: " + ", ".join(missing))
     forbidden = {"runtime", "library", "results", ".venv", ".git", ".env"}
     bad = sorted(name for name in names if forbidden.intersection(Path(name).parts)
                  or name.endswith((".sqlite", ".npz", ".log")))

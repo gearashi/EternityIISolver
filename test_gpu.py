@@ -172,14 +172,14 @@ def run(backend='auto', replicas=128, allow_opencl_cpu=False, device_name=None, 
     return result
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--backend', choices=('auto', 'cuda', 'opencl'), default='auto')
     parser.add_argument('--replicas', type=int, default=128)
     parser.add_argument('--allow-opencl-cpu', action='store_true', help='Explicitly select a CPU OpenCL device for CI diagnostics only')
     parser.add_argument('--device', help='OpenCL device-name substring (also ETERNITY_OPENCL_DEVICE)')
     parser.add_argument('--output', type=Path)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not 64 <= args.replicas <= 4096:
         parser.error('diagnostic replica count must be in64..4096')
     if args.allow_opencl_cpu and args.backend != 'opencl':

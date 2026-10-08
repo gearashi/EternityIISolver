@@ -24,3 +24,20 @@ def resource_files(root):
         if not source.resolve().is_relative_to(root):
             raise ValueError(f"Build resource escapes the repository: {relative}")
         yield relative, source
+
+DISTRIBUTION_DOCUMENTS = (
+    "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "DATA_PROVENANCE.md",
+    "docs/BOINC.md", "boinc/job.xml", "boinc/workunit.sample.json",
+    "boinc/input_template.xml", "boinc/output_template.xml",
+    "boinc/validate_result.py", "boinc/test_validate_result.py",
+)
+
+def documentation_files(root):
+    root = Path(root).resolve()
+    for relative in DISTRIBUTION_DOCUMENTS:
+        source = root / relative
+        if not source.is_file():
+            raise FileNotFoundError(f"Required distribution documentation is missing: {relative}")
+        if not source.resolve().is_relative_to(root):
+            raise ValueError(f"Distribution documentation escapes the repository: {relative}")
+        yield relative, source

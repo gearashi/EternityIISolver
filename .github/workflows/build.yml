@@ -45,8 +45,10 @@ jobs:
       - name: Install CUDA component wheels
         if: matrix.flavor == 'cuda-opencl'
         run: python -m pip install -r requirements-cuda.txt
-      - name: CPU rule, lifecycle, library, and backend tests
-        run: python -m unittest test_validator test_library_cache test_lifecycle test_gpu_backends -v
+      - name: CPU rule, lifecycle, library, backend, and BOINC tests
+        run: python -m unittest test_validator test_library_cache test_lifecycle test_gpu_backends test_boinc_worker -v
+      - name: Independent BOINC result validation tests
+        run: python -m unittest discover -s boinc -p "test_*.py" -v
       - name: Install diagnostic CPU OpenCL runtime
         if: runner.os == 'Linux'
         run: |
@@ -58,8 +60,14 @@ jobs:
           POCL_MAX_PTHREAD_COUNT: '2'
           OMP_NUM_THREADS: '2'
         run: python test_gpu.py --backend opencl --allow-opencl-cpu --replicas 128 --output build/opencl-pocl-diagnostic.json
-      - name: Build native archive and smoke-test frozen validate/status
+      - name: Build native archive and smoke-test frozen commands
         run: python scripts/build_release.py --flavor ${{ matrix.flavor }}
+      - name: Frozen OpenCL correctness on PoCL (CPU diagnostic, not GPU certification)
+        if: runner.os == 'Linux'
+        env:
+          POCL_MAX_PTHREAD_COUNT: '2'
+          OMP_NUM_THREADS: '2'
+        run: ./dist/EternityIISolver/EternityIISolver diagnose --backend opencl --allow-opencl-cpu --replicas 128 --output build/frozen-opencl-pocl.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-${{ matrix.target }}
@@ -71,7 +79,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: diagnostics-${{ matrix.target }}
-          path: build/opencl-pocl-diagnostic.json
+          path: |
+            build/opencl-pocl-diagnostic.json
+            build/frozen-opencl-pocl.json
           if-no-files-found: warn
 
   python-package:

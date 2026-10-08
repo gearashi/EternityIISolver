@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- One JSON workunit. Supply measured rsc_fpops_est, rsc_fpops_bound,
+     rsc_memory_bound, rsc_disk_bound and delay_bound in project configuration
+     or the create_work call; this example does not guess production limits. -->
+<input_template>
+  <file_info>
+  </file_info>
+  <workunit>
+    <file_ref>
+      <open_name>workunit.json</open_name>
+      <copy_file/>
+    </file_ref>
+  </workunit>
+</input_template>

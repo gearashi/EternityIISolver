@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Experimental BOINC wrapper job, CUDA only. The app version must expose
+     the native solver executable with logical name eternity_gpu_worker.
+     Workunit and output templates use copy_file for these plain filenames.
+     The wrapper expands GPU_DEVICE_NUM from the scheduler's GPU allocation. -->
+<job_desc>
+  <task>
+    <application>eternity_gpu_worker</application>
+    <command_line>boinc --input workunit.json --output result.json --checkpoint checkpoint.npz --progress fraction_done.txt --backend cuda --cuda-device $GPU_DEVICE_NUM</command_line>
+    <checkpoint_filename>checkpoint.npz</checkpoint_filename>
+    <fraction_done_filename>fraction_done.txt</fraction_done_filename>
+    <multi_process/>
+    <priority>3</priority>
+  </task>
+</job_desc>
