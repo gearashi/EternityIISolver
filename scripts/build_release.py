@@ -76,6 +76,12 @@ def main():
     app_name = "EternityIISolver.app" if sys.platform == "darwin" else "EternityIISolver"
     app = ROOT / "dist" / app_name
     executable = app / "Contents" / "MacOS" / "EternityIISolver" if sys.platform == "darwin" else app / ("EternityIISolver.exe" if sys.platform == "win32" else "EternityIISolver")
+    if sys.platform.startswith("linux"):
+        shadowed = [str(path.relative_to(app)) for path in app.rglob("*")
+                    if any(path.name == name or path.name.startswith(name + ".")
+                           for name in ("libstdc++.so.6", "libgcc_s.so.1"))]
+        if shadowed:
+            raise RuntimeError(f"Bundled host C++ runtimes would shadow system GPU drivers: {shadowed}")
     if not args.skip_smoke:
         with tempfile.TemporaryDirectory(prefix="eternity-frozen-smoke-") as temporary:
             checked = subprocess.run([str(executable), "validate"], cwd=temporary, capture_output=True, text=True, check=True, timeout=90)

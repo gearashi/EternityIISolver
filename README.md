@@ -19,7 +19,7 @@ Open `EternityIISolver.exe` on Windows, `EternityIISolver.app` on macOS, or `Ete
 
 **Stop** requests a clean stop and checkpoint. The dashboard stays available afterward. Closing the browser does not stop an active search. On systems where a graphical launch is inconvenient, use the commands below.
 
-Native archives include Python and application dependencies, but hardware drivers remain system supplied. OpenCL support is conditional on the driver exposing a suitable GPU; normal search does not silently fall back to CPU OpenCL. AMD/Intel users should select **OpenCL** explicitly. Apple has [deprecated OpenCL](https://developer.apple.com/opencl/); macOS builds therefore depend on the runtime still exposed by the target Mac. The macOS archives are not Apple-notarized. They are built natively on macOS 15 Intel and macOS 14 ARM runners; older macOS versions are not certified.
+Native archives include Python and application dependencies, but hardware drivers remain system supplied. Linux builds target the Ubuntu 22.04 runtime baseline and use the host system's `libstdc++` and `libgcc`, so newer GPU drivers load their matching C++ runtime. OpenCL support is conditional on the driver exposing a suitable GPU; normal search does not silently fall back to CPU OpenCL. AMD/Intel users should select **OpenCL** explicitly. Apple has [deprecated OpenCL](https://developer.apple.com/opencl/); macOS builds therefore depend on the runtime still exposed by the target Mac. The macOS archives are not Apple-notarized. They are built natively on macOS 15 Intel and macOS 14 ARM runners; older macOS versions are not certified.
 
 ## Commands
 

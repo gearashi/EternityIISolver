@@ -90,8 +90,21 @@ jobs:
         run: |
           mkdir frozen
           tar -xzf native-artifact/EternityIISolver-*-linux-x64-cuda-opencl.tar.gz -C frozen
+      - name: Record system OpenCL driver dependencies under the frozen library path
+        run: |
+          pocl_library="$(find /usr/lib/x86_64-linux-gnu -maxdepth 1 -name 'libpocl.so.2' -print -quit)"
+          test -n "$pocl_library"
+          mkdir -p build
+          LD_LIBRARY_PATH="$PWD/frozen/EternityIISolver/_internal:${LD_LIBRARY_PATH:-}" ldd -r "$pocl_library" > build/opencl-driver-linkage.txt 2>&1
+          cat build/opencl-driver-linkage.txt
       - name: Frozen OpenCL correctness on PoCL (CPU diagnostic, not GPU certification)
-        run: ./frozen/EternityIISolver/EternityIISolver diagnose --backend opencl --allow-opencl-cpu --replicas 128 --output build/frozen-opencl-pocl.json
+        run: |
+          if LD_DEBUG=libs,versions ./frozen/EternityIISolver/EternityIISolver diagnose --backend opencl --allow-opencl-cpu --replicas 128 --output build/frozen-opencl-pocl.json 2> build/frozen-opencl-loader.log; then
+            test -s build/frozen-opencl-pocl.json
+          else
+            tail -n 100 build/frozen-opencl-loader.log
+            exit 1
+          fi
       - name: Upload diagnostic evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -100,6 +113,8 @@ jobs:
           path: |
             build/opencl-pocl-diagnostic.json
             build/frozen-opencl-pocl.json
+            build/opencl-driver-linkage.txt
+            build/frozen-opencl-loader.log
           if-no-files-found: warn
 
   python-package:

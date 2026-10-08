@@ -59,6 +59,15 @@ analysis = Analysis([str(root / "launcher.py")], pathex=[str(root)], binaries=bi
     datas=datas, hiddenimports=sorted(set(hiddenimports)),
     runtime_hooks=[str(root / "scripts" / "frozen_runtime.py")],
     excludes=[] if with_cuda else ["cupy", "cupy_backends"], noarchive=False)
+# System OpenCL drivers must load the matching host C++/unwind runtimes.
+# An older build-host copy can prevent newer drivers (including PoCL/LLVM)
+# from loading before clGetPlatformIDs, even when source Python works.
+# https://pyinstaller.org/en/stable/usage.html#making-gnu-linux-apps-forward-compatible
+if sys.platform.startswith("linux"):
+    host_runtime_names = ("libstdc++.so.6", "libgcc_s.so.1")
+    analysis.binaries = [entry for entry in analysis.binaries
+        if not any(Path(entry[0]).name == name or Path(entry[0]).name.startswith(name + ".")
+                   for name in host_runtime_names)]
 archive = PYZ(analysis.pure)
 executable = EXE(archive, analysis.scripts, [], exclude_binaries=True,
     name="EternityIISolver", debug=False, bootloader_ignore_signals=False,
