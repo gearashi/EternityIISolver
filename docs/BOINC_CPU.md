@@ -24,7 +24,7 @@ The inspected Windows production profile used runner 2.37 and `solver_windows_x6
 7ea0889103958d0fd1af6365ed0fd14e109acd441e5aecbfa2fbe285513ef60c
 ```
 
-The public project directory contained executables and inputs, but no solver source files or source archives. The related [public CPU solver at commit 711e0c8](https://github.com/igorpejic/eternity-ii-dfs-solver/blob/711e0c8da38a21a7ec7452a0fde0430888caa46e/bw.cpp) contains a useful earlier DFS implementation. It lacks the production interleaving, sharding, root filtering, and journal extensions, so it is not a verified substitute for solver 2.36.
+The inspected downloaded BOINC project files contained executables and inputs, but no solver source files or source archives. The related [public CPU solver at commit 711e0c8](https://github.com/igorpejic/eternity-ii-dfs-solver/blob/711e0c8da38a21a7ec7452a0fde0430888caa46e/bw.cpp) contains a useful earlier DFS implementation. It lacks the production interleaving, sharding, root filtering, and journal extensions, so it is not a verified substitute for solver 2.36.
 
 ### Piece and root encoding
 
