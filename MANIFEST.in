@@ -1,0 +1,22 @@
+include README.md LICENSE THIRD_PARTY_NOTICES.md DATA_PROVENANCE.md
+include pyproject.toml setup.py build_support.py EternityIISolver.spec
+include requirements*.txt
+include Dashboard.html kernels.cu kernels.cl
+include test_*.py
+include data/pieces.txt data/puzzle.json data/record466.json data/catalog.json data/catalog.csv
+include data/seeds/8d5630eb81a7bc5f1a2b0318c3cd0f13ffc6ca14dc8db157234c71fd1418e7fb.json
+include data/seeds/512853e16ca21647a79fd3619d26d91b51bad41f04ec22b52a92525053baf4fa.json
+include data/seeds/4bd800d05268eb51f5476835d3971f24af5edce9fba6839604ec1bed5a8da8c3.json
+include data/seeds/49c9b536a5701bb4e9da09aee86fb77f2a6eb5353935b2ac68c4f842c2a52e6a.json
+include data/seeds/459063ff5b0e267b3bd057d33149c7482fe838c8d5e85b70bfad7d762a422b41.json
+include data/seeds/1c7be6e4cb9cb670c051061080e3cce00e1d480dd5e49a3e453d1986f65ed15e.json
+include data/seeds/157343be327ea2003cf611ce97b5c3eafc343648880c3872707a25ed0285c108.json
+include data/seeds/11edaf64885d797b6ddb5e3f05e2526648f70ac896dec29f9ffd85d4e1ed982b.json
+recursive-include scripts *.py
+recursive-include .github *.yml *.md
+prune runtime
+prune library
+prune results
+prune build
+prune dist
+global-exclude *.pyc *.pyo *.npz *.sqlite *.db *.log .DS_Store

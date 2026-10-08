@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Eternity II · Local search</title>
+<style>
+:root{color-scheme:dark;--bg:#10151c;--panel:#19222d;--line:#2b3949;--muted:#a5b3c4;--ink:#eef5fb;--mint:#79e4c1;--gold:#f2cf79}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,Segoe UI,sans-serif}main{max-width:1320px;margin:auto;padding:30px 28px 50px}header{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:25px}.eyebrow{font-size:11px;font-weight:700;letter-spacing:.16em;color:var(--mint);text-transform:uppercase}h1{font-size:30px;letter-spacing:-.03em;margin:4px 0}h2{font-size:17px;margin:0}.muted{color:var(--muted)}.small{font-size:12px}.actions{display:flex;gap:10px;align-items:center}button{font:inherit;color:var(--ink);background:#293746;border:1px solid #526476;border-radius:8px;padding:10px 17px;cursor:pointer}button:hover{background:#35475b}button:disabled{opacity:.5;cursor:default}.stop{border-color:#a45e69;background:#4a2933}.badge{padding:6px 11px;border-radius:99px;background:#273341;color:var(--muted);font-size:12px;white-space:nowrap}.badge.live{color:var(--mint);background:#1d3f36}.badge.warn{color:var(--gold);background:#403720}.notice{margin:0 0 18px;padding:12px 16px;background:#3b321f;color:#f3dba3;border:1px solid #675633;border-radius:9px}.notice[hidden]{display:none}.metrics{display:grid;grid-template-columns:1.3fr 1fr 1fr 1fr;gap:14px;margin-bottom:20px}.card,.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px}.card{padding:18px 20px}.label{color:var(--muted);font-size:12px}.value{font-size:29px;line-height:1.35;font-weight:650;font-variant-numeric:tabular-nums}.value strong{color:var(--mint);font-size:43px}.value span{color:var(--muted);font-size:19px;font-weight:400}.sub{margin-top:6px;color:var(--muted);font-size:12px}.layout{display:grid;grid-template-columns:minmax(420px,1.4fr) minmax(290px,1fr);gap:20px;align-items:start}.panel{padding:21px}.panel+.panel{margin-top:18px}.panelhead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.boardbox{position:relative;max-width:740px;margin:auto}canvas{width:100%;height:auto;display:block;border:1px solid #3f5063;background:#0d131b;border-radius:4px}.caption{margin-top:12px;color:var(--muted);font-size:12px}.tooltip{position:absolute;pointer-events:none;background:#111d2e;color:white;padding:8px 11px;border:1px solid #8197af;border-radius:7px;box-shadow:0 6px 20px #0008;font-size:12px;z-index:2;white-space:pre-line}dl{margin:12px 0 0;display:grid;grid-template-columns:1fr auto;gap:12px 16px}dt{color:var(--muted);font-size:13px}dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;max-width:220px;overflow-wrap:anywhere}.librarybar{height:6px;background:#101821;border-radius:9px;margin:17px 0 9px;overflow:hidden}.librarybar i{display:block;background:var(--mint);height:100%;width:0}.fineprint{color:var(--muted);font-size:12px;margin:12px 0 0}a{color:var(--mint)}pre{font-size:11px;overflow:auto;white-space:pre-wrap;word-break:break-word;max-height:210px;color:var(--muted)}details{margin-top:14px}summary{cursor:pointer;color:var(--muted);font-size:12px}.footer{margin-top:24px;color:#8192a6;font-size:12px}input{accent-color:var(--mint)}label{font-size:12px;color:var(--muted)}@media(max-width:850px){.layout{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}header{align-items:flex-start;flex-wrap:wrap}main{padding:20px 16px}}@media(max-width:460px){.metrics{gap:9px}.card{padding:14px}.value{font-size:24px}.value strong{font-size:35px}.panel{padding:15px}.actions{width:100%}}
+</style></head><body><main>
+<header><div><div class="eyebrow">Local GPU search</div><h1>Eternity II</h1><div class="muted small" id="gpu">Connecting to your solver…</div></div><div class="actions"><span id="state" class="badge">Connecting</span><button id="start" disabled>Start</button><button id="stop" class="stop" disabled>Stop &amp; save</button></div></header>
+<div id="notice" class="notice" role="status" hidden></div>
+<section class="panel" style="margin-bottom:20px" aria-label="Search settings">
+<div class="panelhead"><h2>Search settings</h2><span class="small muted">Change settings while stopped</span></div>
+<div style="display:flex;flex-wrap:wrap;gap:22px;align-items:center"><label for="searchCount">Parallel searches<br><input id="searchCount" type="number" min="32" max="32768" step="1" value="4096" style="font:inherit;padding:8px;width:130px;margin-top:6px"></label><label for="backendChoice">GPU support<br><select id="backendChoice" style="font:inherit;padding:8px;margin-top:6px"><option value="auto">Automatic</option><option value="cuda">NVIDIA CUDA</option><option value="opencl">OpenCL (AMD, Intel, Apple, NVIDIA)</option></select></label></div>
+<p class="fineprint">Each parallel search explores its own sequence of swaps and rotations. Start with 4,096; larger counts explore more paths at once but can use more memory without increasing speed. Changing the count keeps saved searches where possible, adds new ones when increasing it, and backs up the previous population.</p>
+</section><section class="metrics" aria-label="Search statistics">
+<div class="card"><div class="label">Best verified</div><div class="value"><strong id="score">—</strong><span> / 480</span></div><div class="sub" id="recordLabel">Waiting for a validated board</div></div>
+<div class="card"><div class="label">Proposed moves / second</div><div class="value" id="throughput">—</div><div class="sub">GPU search throughput</div></div>
+<div class="card"><div class="label">Parallel searches</div><div class="value" id="replicas">—</div><div class="sub">Independent replicas</div></div>
+<div class="card"><div class="label">Session elapsed</div><div class="value" id="elapsed">—</div><div class="sub" id="updated">No update yet</div></div>
+</section>
+<div class="layout"><section class="panel"><div class="panelhead"><h2>Best board</h2><label><input type="checkbox" id="showIds"> Piece numbers</label></div><div class="boardbox"><canvas id="board" width="960" height="960" aria-label="Best verified sixteen by sixteen puzzle board"></canvas><div id="tooltip" class="tooltip" hidden></div></div><div class="caption" id="boardSummary">Board loading…</div><div class="caption">White marks show mismatched edges. Gold dots identify the five fixed clues. Hover over a piece for its number and rotation.</div></section>
+<aside><section class="panel"><div class="panelhead"><h2>Library coverage</h2><span class="badge" id="cacheBadge">Waiting</span></div><dl><dt>Board records indexed</dt><dd id="indexed">—</dd><dt>Complete arrangements cached</dt><dd id="cached">—</dd><dt>Exact boards known locally</dt><dd id="known">—</dd></dl><div class="librarybar"><i id="cacheBar"></i></div><div class="fineprint" id="cacheText">Index records and full board arrangements are counted separately.</div><p class="fineprint">Arrangements download in the background, highest scores first, at approximately one request per second. An incomplete cache cannot establish that a board is new.</p><details><summary>Library details</summary><pre id="libraryDetails">No library status yet.</pre></details></section>
+<section class="panel"><h2>Search activity</h2><dl><dt>Moves proposed</dt><dd id="proposed">—</dd><dt>Moves accepted</dt><dd id="accepted">—</dd><dt>Known or repeated results</dt><dd id="duplicates">—</dd><dt>Absent from cached score tier</dt><dd id="novel">—</dd><dt>Novelty checks pending</dt><dd id="pending">—</dd><dt>Starting source record</dt><dd id="sourceScore">466 / 480</dd></dl><p class="fineprint">Each reported improvement is checked on the CPU for all 256 pieces, the frame, the five clues, and all 480 shared edges.</p></section>
+<section class="panel"><h2>Keep control</h2><p class="fineprint">Closing this page leaves the search running. The dashboard stays available after stopping; use Start to resume. “Stop &amp; save” requests a clean stop and checkpoint. The <b>stop</b> command also saves and stops the search.</p><p class="fineprint">This search may improve the current record. It does not guarantee a 480 / 480 solution.</p></section></aside></div>
+<div class="footer">Local dashboard · refreshes every 3 seconds · <a href="https://stats.eternityathome.org/solver-research" target="_blank" rel="noopener noreferrer">BOINC solver research</a></div>
+</main><script>
+'use strict';
+const $=id=>document.getElementById(id), count=x=>Number.isFinite(Number(x))?new Intl.NumberFormat().format(Number(x)):'—';
+const compact=x=>Number.isFinite(Number(x))?new Intl.NumberFormat(undefined,{notation:'compact',maximumFractionDigits:1}).format(Number(x)):'—';
+const palette=['#242b34',...Array.from({length:22},(_,i)=>`hsl(${(i*137.508)%360} 65% ${48+(i%3)*7}%)`)];
+const clueCells=new Set([34,45,135,210,221]);
+let currentStatus=null, currentBoard=null, faces=null, fingerprint='', connected=false, busy=false, stopping=false, lastBoardFetch=0, settingsInitialized=false, startRequest=false;
+function elapsed(s){s=Math.max(0,Math.floor(Number(s)||0));const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?`${h}h ${m}m`:`${m}m ${s%60}s`;}
+function notice(text){$('notice').hidden=!text;$('notice').textContent=text||'';}
+function renderStatus(s,isLive){
+ currentStatus=s;const state=isLive?(s.state||'unknown'):'offline';
+ const names={starting:'Starting',running:'Running',stopping:'Stopping',stopped:'Stopped',error:'Error',solved:'Solved',finished_bounded_run:'Finished',offline:'Disconnected'};
+ $('state').textContent=names[state]||state;$('state').className='badge '+(state==='running'||state==='solved'?'live':state==='offline'||state==='error'?'warn':'');
+ $('gpu').textContent=typeof s.gpu==='string'?s.gpu+(s.backend?' · '+s.backend.toUpperCase():''):'Choose your settings and press Start';
+ const score=Number(s.best_score),source=Number(s.source_best_score??466);
+ $('score').textContent=Number.isFinite(score)?score:'—';$('sourceScore').textContent=`${source} / 480`;
+ $('recordLabel').textContent=score>source?'Improved verified record':score===source?'Imported source record':'Verified candidate';
+ $('throughput').textContent=isLive?compact(s.moves_per_second):'—';$('replicas').textContent=count(s.replicas);$('elapsed').textContent=elapsed(s.elapsed_seconds);
+ const date=new Date(s.last_update);$('updated').textContent=Number.isNaN(date.getTime())?'No update yet':`Updated ${date.toLocaleTimeString()}`;
+ for(const [id,key] of [['proposed','proposed_moves'],['accepted','accepted_moves'],['duplicates','duplicate_results'],['novel','new_results'],['pending','pending_novelty_checks']])$(''+id).textContent=count(s[key]);
+ const library=s.library||{},total=Number(library.indexed_boards),cached=Number(library.cached_geometries);
+ $('indexed').textContent=count(library.indexed_boards);$('cached').textContent=count(library.cached_geometries);$('known').textContent=count(library.known_exact_boards);
+ const fraction=Number.isFinite(total)&&total>0&&Number.isFinite(cached)?Math.max(0,Math.min(1,cached/total)):0;
+ $('cacheBar').style.width=(100*fraction)+'%';$('cacheBadge').textContent=library.enabled===false?'Disabled':library.geometry_cache_complete?'Cached':library.full_metadata_loaded?'Caching boards':'Loading index';
+ $('cacheText').textContent=library.enabled===false?'Library synchronization is disabled.':Number.isFinite(total)?`${count(cached)} of ${count(total)} arrangements cached (${(100*fraction).toFixed(2)}%).`:'Waiting for library metadata.';
+ $('libraryDetails').textContent=JSON.stringify(library,null,2);
+ const active=s.can_start===false||['starting','running','stopping'].includes(s.state);
+ if(isLive&&!active)stopping=false;
+ $('stop').disabled=!isLive||stopping||!active;
+ $('start').disabled=!isLive||active||startRequest||s.dashboard_available===false;
+ $('searchCount').disabled=active||startRequest;$('backendChoice').disabled=active||startRequest;
+ if(isLive&&!settingsInitialized){$('searchCount').value=s.replicas||4096;$('backendChoice').value=['auto','cuda','opencl'].includes(s.backend)?s.backend:'auto';settingsInitialized=true;}
+ if(isLive){if(s.error)notice('Solver error: '+s.error);else if(stopping)notice('Stop requested. Waiting for the solver to save its checkpoint.');else notice('');}
+}
+function validBoard(b,f){return Array.isArray(b)&&b.length===256&&b.every(v=>Number.isInteger(v)&&v>=0&&v<1024)&&Array.isArray(f)&&f.length===1024&&f.every(a=>Array.isArray(a)&&a.length===4&&a.every(v=>Number.isInteger(v)&&v>=0&&v<=22));}
+function drawBoard(force=false){
+ if(!validBoard(currentBoard,faces))return;
+ const key=currentBoard.join(',')+'|'+$('showIds').checked;if(key===fingerprint&&!force)return;fingerprint=key;
+ const canvas=$('board'),ctx=canvas.getContext('2d'),t=60;ctx.clearRect(0,0,960,960);let breaks=0;
+ for(let i=0;i<256;i++){
+  const x=i%16*t,y=Math.floor(i/16)*t,s=faces[currentBoard[i]],corners=[[x,y],[x+t,y],[x+t,y+t],[x,y+t]];
+  for(let k=0;k<4;k++){ctx.beginPath();ctx.moveTo(x+t/2,y+t/2);ctx.lineTo(...corners[k]);ctx.lineTo(...corners[(k+1)%4]);ctx.closePath();ctx.fillStyle=palette[s[k]];ctx.fill();}
+  ctx.strokeStyle='#0a101b88';ctx.lineWidth=1;ctx.strokeRect(x,y,t,t);
+  if(clueCells.has(i)){ctx.beginPath();ctx.arc(x+t/2,y+t/2,6,0,Math.PI*2);ctx.fillStyle='#fce58b';ctx.fill();ctx.lineWidth=2;ctx.strokeStyle='#3c3010';ctx.stroke();}
+  if($('showIds').checked){const text=String(Math.floor(currentBoard[i]/4)+1);ctx.font='bold 18px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineWidth=4;ctx.strokeStyle='#111c';ctx.strokeText(text,x+t/2,y+t/2);ctx.fillStyle='#fff';ctx.fillText(text,x+t/2,y+t/2);}
+ }
+ ctx.strokeStyle='#fff';ctx.lineWidth=5;ctx.lineCap='round';
+ for(let i=0;i<256;i++){const x=i%16*t,y=Math.floor(i/16)*t,s=faces[currentBoard[i]];if(i%16<15&&s[1]!==faces[currentBoard[i+1]][3]){breaks++;ctx.beginPath();ctx.moveTo(x+t,y+t*.3);ctx.lineTo(x+t,y+t*.7);ctx.stroke();}if(i<240&&s[2]!==faces[currentBoard[i+16]][0]){breaks++;ctx.beginPath();ctx.moveTo(x+t*.3,y+t);ctx.lineTo(x+t*.7,y+t);ctx.stroke();}}
+ $('boardSummary').textContent=`Displayed board: ${480-breaks} / 480 shared edges matched · ${breaks} mismatches.`;
+ canvas.setAttribute('aria-label',`Sixteen by sixteen puzzle board with ${480-breaks} matched edges and ${breaks} mismatches`);
+}
+async function jsonGet(path){const response=await fetch(path,{cache:'no-store',signal:AbortSignal.timeout(5000)});if(!response.ok)throw new Error(`HTTP ${response.status}`);return response.json();}
+async function refresh(){if(busy)return;busy=true;try{
+ const s=await jsonGet('/status');connected=true;renderStatus(s,true);try{localStorage.setItem('eternity-local-status',JSON.stringify(s));}catch{}
+ if(Array.isArray(s.best_board))currentBoard=s.best_board;if(Array.isArray(s.faces))faces=s.faces;
+ if(!faces||!currentBoard||(!s.best_board&&Date.now()-lastBoardFetch>2500)){
+  try{const b=await jsonGet('/board');if(b.board)currentBoard=b.board;if(b.faces)faces=b.faces;lastBoardFetch=Date.now();}catch{if(!faces){try{const d=await jsonGet('/data');faces=d.faces||d.oriented_edges;}catch{}}}
+ }
+ drawBoard();
+}catch{connected=false;if(currentStatus)renderStatus(currentStatus,false);else{$('state').textContent='Disconnected';$('stop').disabled=true;}notice(stopping?'Stop requested; the dashboard connection has closed. Use the status command to confirm the saved state.':'Cannot reach the local solver. Showing the last available values. Use start to resume it, or status to read its saved state.');}finally{busy=false;}}
+$('start').addEventListener('click',async()=>{
+ const replicas=Number($('searchCount').value);
+ if(!Number.isInteger(replicas)||replicas<32||replicas>32768){notice('Enter a whole number from 32 to 32,768.');return;}
+ let failure='';startRequest=true;$('start').disabled=true;notice('Starting your GPU search…');
+ try{const response=await fetch('/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({replicas,backend:$('backendChoice').value}),signal:AbortSignal.timeout(10000)});const result=await response.json();if(!response.ok)throw new Error(result.error||'Start failed');notice('Preparing the GPU and restoring compatible saved progress…');}
+ catch(error){failure='Could not start: '+error.message;}
+ finally{startRequest=false;await refresh();if(failure)notice(failure);}
+});$('stop').addEventListener('click',async()=>{if(!connected||stopping)return;stopping=true;$('stop').disabled=true;notice('Requesting a clean stop…');try{const response=await fetch('/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',signal:AbortSignal.timeout(5000)});if(!response.ok)throw new Error();notice('Stop requested. The solver will save its checkpoint before exiting.');}catch{stopping=false;notice('The stop request could not be delivered. Use the stop command.');$('stop').disabled=!connected;}});
+$('showIds').addEventListener('change',()=>drawBoard(true));
+$('board').addEventListener('mousemove',event=>{if(!currentBoard)return;const rect=event.currentTarget.getBoundingClientRect(),col=Math.min(15,Math.floor((event.clientX-rect.left)/rect.width*16)),row=Math.min(15,Math.floor((event.clientY-rect.top)/rect.height*16)),state=currentBoard[row*16+col];if(!Number.isInteger(state))return;const tip=$('tooltip');tip.textContent=`Row ${row+1}, column ${col+1}\nPiece ${Math.floor(state/4)+1} · ${state%4*90}° clockwise${clueCells.has(row*16+col)?' · fixed clue':''}`;tip.hidden=false;tip.style.left=Math.min(event.clientX-rect.left+12,Math.max(0,rect.width-215))+'px';tip.style.top=Math.max(0,event.clientY-rect.top-62)+'px';});
+$('board').addEventListener('mouseleave',()=>{$('tooltip').hidden=true;});
+try{const cached=JSON.parse(localStorage.getItem('eternity-local-status'));if(cached)renderStatus(cached,false);}catch{}
+refresh();setInterval(refresh,3000);
+</script></body></html>
