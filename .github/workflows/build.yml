@@ -49,36 +49,54 @@ jobs:
         run: python -m unittest test_validator test_library_cache test_lifecycle test_gpu_backends test_boinc_worker -v
       - name: Independent BOINC result validation tests
         run: python -m unittest discover -s boinc -p "test_*.py" -v
-      - name: Install diagnostic CPU OpenCL runtime
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends pocl-opencl-icd
-      - name: OpenCL kernel correctness on PoCL (CPU diagnostic, not GPU certification)
-        if: runner.os == 'Linux'
-        env:
-          POCL_MAX_PTHREAD_COUNT: '2'
-          OMP_NUM_THREADS: '2'
-        run: python test_gpu.py --backend opencl --allow-opencl-cpu --replicas 128 --output build/opencl-pocl-diagnostic.json
       - name: Build native archive and smoke-test frozen commands
         run: python scripts/build_release.py --flavor ${{ matrix.flavor }}
-      - name: Frozen OpenCL correctness on PoCL (CPU diagnostic, not GPU certification)
-        if: runner.os == 'Linux'
-        env:
-          POCL_MAX_PTHREAD_COUNT: '2'
-          OMP_NUM_THREADS: '2'
-        run: ./dist/EternityIISolver/EternityIISolver diagnose --backend opencl --allow-opencl-cpu --replicas 128 --output build/frozen-opencl-pocl.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-${{ matrix.target }}
           path: release-assets/*
           if-no-files-found: error
           compression-level: 0
+  linux-opencl:
+    name: Linux source and frozen OpenCL diagnostics
+    needs: native
+    # Keep the native archive's Ubuntu 22.04 baseline. Its PoCL 1.8/LLVM 11
+    # cannot identify newer CI CPUs; Ubuntu 24.04 supplies PoCL 5.0 instead.
+    # https://packages.ubuntu.com/noble/pocl-opencl-icd
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      POCL_MAX_PTHREAD_COUNT: '2'
+      OMP_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install diagnostic dependencies and CPU OpenCL runtime
+        run: |
+          python -m pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pocl-opencl-icd
+      - name: Source OpenCL correctness on PoCL (CPU diagnostic, not GPU certification)
+        run: python test_gpu.py --backend opencl --allow-opencl-cpu --replicas 128 --output build/opencl-pocl-diagnostic.json
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-linux-x64
+          path: native-artifact
+      - name: Extract the actual Ubuntu 22.04 release archive
+        run: |
+          mkdir frozen
+          tar -xzf native-artifact/EternityIISolver-*-linux-x64-cuda-opencl.tar.gz -C frozen
+      - name: Frozen OpenCL correctness on PoCL (CPU diagnostic, not GPU certification)
+        run: ./frozen/EternityIISolver/EternityIISolver diagnose --backend opencl --allow-opencl-cpu --replicas 128 --output build/frozen-opencl-pocl.json
       - name: Upload diagnostic evidence
-        if: always() && runner.os == 'Linux'
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: diagnostics-${{ matrix.target }}
+          name: diagnostics-linux-x64
           path: |
             build/opencl-pocl-diagnostic.json
             build/frozen-opencl-pocl.json
@@ -115,7 +133,7 @@ jobs:
   publish:
     name: Publish versioned release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [native, python-package]
+    needs: [native, python-package, linux-opencl]
     runs-on: ubuntu-22.04
     permissions:
       contents: write

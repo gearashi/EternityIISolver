@@ -57,7 +57,30 @@ The manifest names a run ID, configuration hash, build ID, epoch, shard index/co
 
 Runner 2.37 additionally contains a 3,600-second per-ticket CPU-budget argument. Its referenced solver contains matching budget-stop messages, `hard_tickets.txt`, and per-thread budget-state filenames. Static strings alone do not establish how every budget stop is encoded in the journal status byte; do not invent an additional status or treat all capped tickets as exhausted. Harvest metadata strings include root, seed, epoch, shard, global ticket, catalog index, and jitter index.
 
-No client was attached and no scheduler work was requested for this static inspection. Exact input grammars, current app-version file mappings, output archive contents, server validation rules, and the scheduler's actual batch assignment still require a representative assigned workunit or project-provided examples. The GPU examples below define a separate contract; they do not impersonate completed CPU tickets or claim production DFS coverage.
+No client was attached and no scheduler work was requested for the static inspection above. The later authorized live-task inspection below verifies a narrower concrete batch. Output archive contents and server validation/assimilation rules still require further evidence. The GPU examples define a separate contract; they do not impersonate completed CPU tickets or claim production DFS coverage.
+
+### Verified live batch: 8 October 2026
+
+A running CPU task was inspected read-only on 8 October 2026. BOINC soft-link files were resolved to their project files; account, host identity, and initialization credentials were excluded. No running file was changed. These observations describe that batch, not every future campaign:
+
+- The active application was `eternity_cpu` version 2.37, allocating one CPU. Its logical runner used `bw_runner_237.exe`, which launched `solver_windows_x64_236.exe`. Legacy executables were also present, so directory presence alone did not identify the active version.
+- `campaign_catalog.txt` contained **3,782 lines**, each exactly nine comma-separated `piece_id/rotation` pairs. `exploration_allow.txt` contained **116 unique zero-based catalog indices**, one integer per line. Their placement order is solver-specific; a catalog row is not a 256-cell board in this GPU adapter's encoding.
+- `campaign_hints.txt` contained five numeric rows in `piece_id row column rotation` order, excluding comments. All five matched this repository's official clues after a **180-degree clockwise board rotation**. Thus this actual frame-2 campaign differs from the older research page's described 90-degree frame. Piece IDs are one-based; row/column/rotation are zero-based.
+- The downloaded piece file's 256 numeric U,D,L,R rows exactly matched this repository's rows. Its raw hash differed because it used CRLF line endings while this repository uses LF. Raw-file hashes remain intentional byte identities and must not be interchanged merely because parsed pieces agree.
+
+The task selected shard `s=274` of `S=4096`, starting jitter `J0=251861248`, ending bound `J1=251863296`, and `N=3782` catalog roots. Its journal verified `globalticket = jidx*N + cidx`. Enumerating `J0 <= jidx < J1` for allowed roots and retaining
+
+```text
+(globalticket - J0*N) % S == s
+```
+
+produced **116 tickets, exactly one per allowed root**, agreeing with the runner's reported total. The 2,048-value jitter interval therefore did not mean 2,048 searches for each of those 116 roots on this shard. The first two complete journal records independently satisfied the equation and partition rule; both used capped status 1 and reported 2,000,000,001 nodes. Do not interpret the nominal two-billion cap as an assertion that a journal counter can never exceed it by one.
+
+A comparison of eight simultaneous tasks found five matching totals. Three tasks with wider, 4,096-value jitter intervals reported totals of 54, 12, and 92 allowed roots, while the partition formula implied 108, 24, and 184 tickets respectively. This is an observed mismatch between reported denominators and formula-derived ticket counts. Its cause and any broader defect remain unconfirmed without completed-task or control-flow validation; a progress percentage alone does not establish ticket coverage.
+
+The supplied wrapper job declared a 7,500-second hard limit and passed a 7,200-second solver limit, plus the node limit and exact-endgame ladder. It used a progress file and checkpoint marker and directed runner output to `result.tar.gz`. These observed CPU limits do not change the new GPU adapter's step-based budget.
+
+The per-workunit catalog hash was `25c37addeaaa8c0f2407a1a6bbf69662fb4815c90f336ff5c7bdd60563c53962`. A separately installed campaign manifest still described a different base catalog. Therefore an installed base manifest alone is insufficient to identify the files actually supplied to a task; resolve its logical input references and hash those bytes. The raw slot snapshot is not distributed with this repository. Exact source-comment paths, account details, and host identifiers are omitted from this report.
 
 ## Files supplied
 
