@@ -48,7 +48,7 @@ class ManualExportTests(unittest.TestCase):
         self.assertEqual(document['discovery_status'], 'unverified')
         self.assertFalse(self.best.exists())
         directory = Path(result['directory'])
-        self.assertEqual(directory.parent, self.home / 'exports')
+        self.assertEqual(directory.parent, (self.home / 'exports').resolve())
         self.assertRegex(directory.name, r'^[A-Za-z0-9_-]+$')
         self.assertEqual({p.name for p in directory.iterdir()}, {'board.json', 'layout.txt', 'validation.json'})
 
@@ -126,7 +126,7 @@ class ManualExportTests(unittest.TestCase):
             connect.assert_not_called(); urlopen.assert_not_called()
         self.assertNotEqual(first['directory'], second['directory'])
         self.assertEqual(first['local_board_sha256_uint16le'], second['local_board_sha256_uint16le'])
-        self.assertEqual(Path(first['directory']).parent, output)
+        self.assertEqual(Path(first['directory']).parent, output.resolve())
 
     def test_cli_returns_paths_to_local_files(self):
         with patch('sys.stdout', new_callable=io.StringIO) as output:
