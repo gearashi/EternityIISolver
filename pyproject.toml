@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eternity-ii-solver"
-version = "0.1.1"
-description = "Validated GPU local search for the five-clue Eternity II puzzle"
+version = "0.2.0"
+description = "Offline GPU repair and exact constraint search for the five-clue Eternity II puzzle"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "GPL-3.0-only"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "DATA_PROVENANCE.md"]
 keywords = ["eternity-ii", "edge-matching", "cuda", "opencl", "puzzle"]
-dependencies = ["numpy>=2.0,<2.6", "pyopencl>=2024.3"]
+dependencies = ["numpy>=2.0,<2.6", "pyopencl>=2024.3", "ortools>=9.15,<9.16", "python-sat>=1.9.dev15,<2"]
 classifiers = ["Programming Language :: Python :: 3", "Operating System :: Microsoft :: Windows", "Operating System :: POSIX :: Linux", "Operating System :: MacOS"]
 
 [project.optional-dependencies]
@@ -30,6 +30,6 @@ Repository = "https://github.com/gearashi/EternityIISolver"
 Issues = "https://github.com/gearashi/EternityIISolver/issues"
 
 [tool.setuptools]
-py-modules = ["launcher", "app_paths", "process_control", "dashboard_server", "solver", "gpu_engine", "gpu_backends", "kernel_port", "validator", "library_cache", "test_gpu", "boinc_worker", "boinc_cpu_workunit", "manual_export"]
+py-modules = ["launcher", "app_paths", "process_control", "dashboard_server", "solver", "gpu_engine", "gpu_backends", "kernel_port", "validator", "library_cache", "test_gpu", "boinc_worker", "boinc_cpu_workunit", "manual_export", "exact_model", "exact_dfs", "exact_sat", "exact_cp", "exact_worker", "search_resources", "exact_diagnostics", "hybrid_sampling"]
 packages = ["eternity_resources"]
 include-package-data = true

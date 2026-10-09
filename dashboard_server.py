@@ -17,7 +17,7 @@ from validator import load_bundle, validate_board
 
 
 DEFAULT_SETTINGS = {'replicas': 4096, 'backend': 'auto', 'seed': 20261007,
-                    'no_library': False, 'seconds': None}
+                    'no_library': False, 'seconds': None, 'method': 'gpu', 'exact_engine': 'dfs', 'workers': 1}
 MAX_BODY = 4096
 
 
@@ -25,6 +25,14 @@ def validate_settings(value):
     if not isinstance(value, dict) or set(value) - set(DEFAULT_SETTINGS):
         raise ValueError('Expected an object containing supported search settings')
     settings = dict(DEFAULT_SETTINGS, **value)
+    if settings['method'] not in ('gpu', 'exact'):
+        raise ValueError('Search method must be gpu or exact')
+    if settings['exact_engine'] not in ('dfs', 'sat', 'cp-sat', 'hybrid'):
+        raise ValueError('Exact engine must be dfs, sat, cp-sat or hybrid')
+    if type(settings['workers']) is not int or not 1 <= settings['workers'] <= 4:
+        raise ValueError('CPU workers must be an integer from 1 to 4')
+    if settings['method'] == 'exact' and settings['exact_engine'] != 'cp-sat' and settings['workers'] != 1:
+        raise ValueError('SAT and backtracking use one CPU worker')
     if type(settings['replicas']) is not int or not 32 <= settings['replicas'] <= 32768:
         raise ValueError('Parallel searches must be an integer from 32 to 32768')
     if settings['backend'] not in ('auto', 'cuda', 'opencl'):
@@ -43,6 +51,14 @@ def worker_command(home, port, settings):
     command = [sys.executable]
     if not getattr(sys, 'frozen', False):
         command.append(str(Path(__file__).resolve().with_name('launcher.py')))
+    if settings['method'] == 'exact':
+        command.extend(['exact', '--preserve-stop', '--state-dir', str(home), '--port', str(port),
+                        '--engine', settings['exact_engine'], '--workers', str(settings['workers']), '--seed', str(settings['seed'])])
+        if settings['exact_engine'] == 'hybrid':
+            command.extend(['--backend', settings['backend'], '--replicas', str(settings['replicas'])])
+        if settings['seconds'] is not None:
+            command.extend(['--seconds', str(settings['seconds'])])
+        return command
     command.extend(['run', '--no-dashboard', '--preserve-stop', '--state-dir', str(home),
                     '--port', str(port), '--replicas', str(settings['replicas']),
                     '--backend', settings['backend'], '--seed', str(settings['seed'])])
@@ -131,7 +147,7 @@ class DashboardServer(ThreadingHTTPServer):
                     # Trust a newly written worker status, never stale PID equality.
                     if not fresh_status:
                         saved.update(state='starting', pid=self.worker.pid, process_alive=True)
-                        saved.update({key: self.settings[key] for key in ('replicas', 'backend', 'seed')})
+                        saved.update({key: self.settings[key] for key in ('replicas', 'backend', 'seed', 'method', 'exact_engine', 'workers')})
                         saved.pop('error', None)
                         saved.pop('traceback', None)
                 else:
@@ -150,10 +166,11 @@ class DashboardServer(ThreadingHTTPServer):
             saved.setdefault('best_score', 466)
             saved.setdefault('source_best_score', 466)
             saved.update(dashboard_available=True, dashboard_pid=os.getpid(), port=self.port,
-                         can_start=not active, can_stop=bool(active), state_dir=str(self.home))
+                         can_start=not active, can_stop=bool(active), state_dir=str(self.home), settings=dict(self.settings))
             legacy_active = active and self.worker is None and saved.get('external_network_enabled') is not False
-            saved.update(search_method='gpu-board-repair',
-                         counter_semantics='local move attempts; not DFS nodes or BOINC credit')
+            saved.setdefault('method', 'gpu')
+            saved.setdefault('search_method', 'gpu-board-repair')
+            saved.setdefault('counter_semantics', 'local move attempts; not DFS nodes or BOINC credit')
             library = dict(saved.get('library') or {})
             if legacy_active:
                 saved['external_network_enabled'] = None
@@ -199,7 +216,8 @@ class DashboardServer(ThreadingHTTPServer):
             self.settings = settings
             atomic_json(self.runtime / 'dashboard-settings.json', settings)
             status = self.status()
-            status.update(replicas=settings['replicas'], backend=settings['backend'], seed=settings['seed'])
+            status.update(replicas=settings['replicas'], backend=settings['backend'], seed=settings['seed'],
+                          method=settings['method'], exact_engine=settings['exact_engine'], workers=settings['workers'])
             return status, True
 
     def stop_worker(self):

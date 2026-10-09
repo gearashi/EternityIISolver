@@ -1,4 +1,4 @@
-"""Portable controls for a local Eternity II GPU search."""
+"""Portable controls for offline Eternity II GPU repair and exact search."""
 import argparse
 import json
 import os
@@ -13,7 +13,7 @@ import webbrowser
 from app_paths import resource_root, state_root
 from process_control import read_status
 
-VERSION = '0.1.1'
+VERSION = '0.2.0'
 
 
 class _NoLocalRedirect(urllib.request.HTTPRedirectHandler):
@@ -39,6 +39,9 @@ def parser():
         command = commands.add_parser(name)
         command.add_argument('--state-dir', type=Path, help='Folder for checkpoints, cache, logs and results')
         if name in ('start', 'run'):
+            command.add_argument('--method', choices=('gpu', 'exact'), default='gpu')
+            command.add_argument('--exact-engine', choices=('dfs', 'sat', 'cp-sat', 'hybrid'), default='dfs')
+            command.add_argument('--workers', type=int, default=1, help='Exact CPU workers (1; CP-SAT supports up to 4)')
             command.add_argument('--backend', choices=('auto', 'cuda', 'opencl'), default='auto')
             command.add_argument('--replicas', type=int, default=4096)
             command.add_argument('--seed', type=int, default=20261007)
@@ -59,11 +62,24 @@ def parser():
     commands.add_parser('diagnose', help='Run bounded GPU correctness diagnostics; diagnose --help lists options')
     commands.add_parser('boinc', help='Run an experimental bounded BOINC workunit; boinc --help lists options')
     commands.add_parser('inspect-cpu', help='Read CPU workunit inputs and ticket IDs without running a search')
+    commands.add_parser('diagnose-hybrid', help='Run bounded GPU random-board sampling diagnostics')
+    commands.add_parser('diagnose-exact', help='Run small offline CPU search-engine correctness checks')
+    commands.add_parser('exact', help='Run an offline exact CPU search; exact --help lists options')
     commands.add_parser('export-best', help='Save validated candidate files locally for manual review; never uploads')
     return result
 
 
 def run_arguments(args):
+    if getattr(args, 'method', 'gpu') == 'exact':
+        result = ['--state-dir', str(state_root(args.state_dir)), '--engine', args.exact_engine,
+                  '--workers', str(args.workers), '--seed', str(args.seed), '--port', str(args.port)]
+        if args.exact_engine == 'hybrid':
+            result.extend(['--backend', args.backend, '--replicas', str(args.replicas)])
+        if args.seconds is not None:
+            result.extend(['--seconds', str(args.seconds)])
+        if getattr(args, 'preserve_stop', False):
+            result.append('--preserve-stop')
+        return result
     result = ['--state-dir', str(state_root(args.state_dir)), '--backend', args.backend,
               '--replicas', str(args.replicas), '--seed', str(args.seed), '--port', str(args.port)]
     if args.seconds is None:
@@ -138,7 +154,7 @@ def ensure_dashboard(home, port=8765):
 def start(args):
     home = state_root(args.state_dir)
     url = ensure_dashboard(home, args.port)
-    payload = json.dumps({'replicas': args.replicas, 'backend': args.backend,
+    payload = json.dumps({'method': args.method, 'exact_engine': args.exact_engine, 'workers': args.workers, 'replicas': args.replicas, 'backend': args.backend,
                           'seed': args.seed, 'seconds': args.seconds, 'no_library': args.no_library}).encode()
     request = urllib.request.Request(url + 'start', data=payload,
                                      headers={'Content-Type': 'application/json'}, method='POST')
@@ -176,6 +192,15 @@ def main(argv=None):
     if argv and argv[0] == 'inspect-cpu':
         from boinc_cpu_workunit import main as inspect_cpu
         return inspect_cpu(argv[1:])
+    if argv and argv[0] == 'diagnose-hybrid':
+        from hybrid_sampling import main as diagnose_hybrid
+        return diagnose_hybrid(argv[1:])
+    if argv and argv[0] == 'diagnose-exact':
+        from exact_diagnostics import main as diagnose_exact
+        return diagnose_exact(argv[1:])
+    if argv and argv[0] == 'exact':
+        from exact_worker import main as exact_search
+        return exact_search(argv[1:])
     if argv and argv[0] == 'export-best':
         from manual_export import main as export_best
         return export_best(argv[1:])
@@ -193,7 +218,10 @@ def main(argv=None):
             from dashboard_server import main as serve
             return serve(['--state-dir', str(home), '--port', str(args.port)])
         if args.command == 'run':
-            from solver import main as run_solver
+            if args.method == 'exact':
+                from exact_worker import main as run_solver
+            else:
+                from solver import main as run_solver
             return run_solver(run_arguments(args))
         if args.command == 'start':
             return start(args)

@@ -95,7 +95,14 @@ def main():
             validation = json.loads(Path(files["validation_path"]).read_text(encoding="utf-8"))
             if not files.get("exported") or files.get("score") != 466 or not validation.get("valid"):
                 raise RuntimeError("Frozen manual candidate export failed validation")
-            for command in ("diagnose", "boinc", "inspect-cpu", "export-best"):
+            exact_check = subprocess.run([str(executable), "diagnose-exact", "--seconds", "5"],
+                                         cwd=temporary, capture_output=True, text=True, check=True, timeout=60)
+            if not json.loads(exact_check.stdout).get("passed"):
+                raise RuntimeError("Frozen exact-engine diagnostics failed")
+            subprocess.run([sys.executable, str(ROOT / "scripts" / "smoke_exact_app.py"),
+                            "--executable", str(executable), "--output", str(ROOT / "build" / "exact-app-smoke.json")],
+                           cwd=temporary, check=True, timeout=120)
+            for command in ("diagnose", "boinc", "inspect-cpu", "export-best", "exact", "diagnose-exact", "diagnose-hybrid"):
                 subprocess.run([str(executable), command, "--help"], cwd=temporary,
                                capture_output=True, text=True, check=True, timeout=30)
     # Top-level readable documentation accompanies the app and its dependency notices.

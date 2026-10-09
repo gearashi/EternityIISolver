@@ -1,3 +1,7 @@
 # Known release-build versions. The project metadata permits compatible source installs.
 numpy==2.5.3
 pyopencl==2026.1.4
+
+# Native SAT / constraint-programming engines, used offline.
+ortools==9.15.6755
+python-sat==1.9.dev15

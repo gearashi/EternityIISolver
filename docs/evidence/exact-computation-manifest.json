@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "claim_id": "eternity-ii-bounded-exact-engine-comparison-20261009",
+  "repository": {
+    "commit": "30494ba837240aa4169e4df4da7c147494df91aa",
+    "dirty": true
+  },
+  "command": [
+    "python",
+    "-B",
+    "scripts/benchmark_exact.py",
+    "--seconds",
+    "5",
+    "--full-seconds",
+    "30",
+    "--output",
+    "exact-comparison.json"
+  ],
+  "environment": {
+    "software": [
+      "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+      "Windows-10-10.0.19044-SP0",
+      "ortools 9.15.6755",
+      "python-sat 1.9.dev15"
+    ],
+    "hardware": "Intel Core i7-4790,16GiB RAM; one CPU worker per isolated engine; GPU unused in this comparison"
+  },
+  "mathematics": {
+    "assertion_tested": "Compare exact-engine outcomes and elapsed time on three known-solvable synthetic tasks, four fixed-outside real-board regions and the complete five-clue puzzle within explicit budgets.",
+    "coefficient_domain": "Finite integer piece IDs, rotation states and edge colors; exact Boolean/integer constraints. Floating point is used only for time/resource accounting.",
+    "conventions": "state=4*zero-based piece+clockwise rotation; row-major cells; edges NESW; gray0; all pieces exactly once; regional tasks constrain only edges touching released cells.",
+    "inputs": [
+      {
+        "path": "data/pieces.txt",
+        "sha256": "1f0ec5db754c3ac94b95656f303745b85347c14adff33a0fda8f762ca79024ae"
+      },
+      {
+        "path": "data/puzzle.json",
+        "sha256": "155256adadf64cce053445a33d8488dada57fe891b04f46d3b501d37bb2ddd23"
+      },
+      {
+        "path": "data/record466.json",
+        "sha256": "33b5d5199718a705e5ecf5e8fe46a340f555e961e2fe86c64368a693f6c6421c"
+      }
+    ],
+    "bounds": {
+      "workers_per_case": 1,
+      "soft_peak_memory_mb": 2048,
+      "ordinary_seconds": 5.0,
+      "whole_seconds": 30.0,
+      "hard_process_timeout_extra_seconds": 15
+    },
+    "non_claims": [
+      "No bounded timeout proves impossibility.",
+      "Neighborhood infeasibility only covers its fixed outside pieces.",
+      "Synthetic cases do not establish full-puzzle performance.",
+      "DFS is Python, SAT/CP native; comparison includes implementation and encoding effects.",
+      "Concurrent desktop/BOINC load is uncontrolled; timings are exploratory, not hardware-normalized.",
+      "No480/480 solution was found; no fastest full-puzzle engine was established."
+    ]
+  },
+  "randomness": {
+    "used": true,
+    "generator": "Python random for generated tasks/DFS; SAT initial phases; OR-Tools solver seed",
+    "seed": "task901+size; search17; PYTHONHASHSEED0"
+  },
+  "run": {
+    "started_at": "2026-10-09T16:24:16.863295+00:00",
+    "runtime_seconds": 110.78431,
+    "exit_status": 0
+  },
+  "outputs": [
+    {
+      "path": "docs/evidence/exact-comparison-20261009.json",
+      "sha256": "552b2e503f0a1a2cb8b5094539fb74ef1feff5625c025e0aef2e69af1a0d445d"
+    }
+  ],
+  "checks": [
+    "Every solved witness passed independent common-task validation.",
+    "Known synthetic witnesses checked before solving.",
+    "All24 isolated child runs completed without errors.",
+    "Recorded source hashes still matched at manifest creation.",
+    "Source tests include exhaustive tiny-puzzle comparisons, cancellation and checkpoint corruption/resume cases."
+  ],
+  "result": "All three engines solved the three synthetic tasks and reported infeasibility for the four specific fixed-outside regional tasks. All three full-puzzle runs timed out after30seconds; whole-puzzle feasibility and fastest algorithm remain inconclusive. DFS was quickest in these small tested tasks.",
+  "residual_risks": [
+    "Desktop and BOINC load were uncontrolled; one run per engine/case.",
+    "Python DFS compared with native SAT/CP plus encoding overhead.",
+    "Windows memory limit is cooperative; no hard OS memory cap.",
+    "No independent UNSAT certificate was checked.",
+    "Version1 manual provenance does not enforce all execution input hashes or machine-checkable caps; source/input hashes and budget details are supplied in the artifacts."
+  ]
+}

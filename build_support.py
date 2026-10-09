@@ -27,9 +27,12 @@ def resource_files(root):
 
 DISTRIBUTION_DOCUMENTS = (
     "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "DATA_PROVENANCE.md",
-    "docs/BOINC.md", "docs/BOINC_CPU.md", "boinc/job.xml", "boinc/workunit.sample.json",
+    "docs/BOINC.md", "docs/BOINC_CPU.md", "docs/EXACT_SEARCH.md", "boinc/job.xml", "boinc/workunit.sample.json",
     "boinc/input_template.xml", "boinc/output_template.xml",
     "boinc/validate_result.py", "boinc/test_validate_result.py",
+    "docs/evidence/exact-comparison-20261009.json", "docs/evidence/exact-computation-manifest.json",
+    "docs/evidence/pruning-comparison-20261009.json", "docs/evidence/hybrid-ordering-20261009.json",
+    "docs/evidence/hybrid-sampling-cuda-20261009.json", "docs/evidence/hybrid-sampling-opencl-20261009.json",
 )
 
 def documentation_files(root):
