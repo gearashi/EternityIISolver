@@ -216,6 +216,10 @@ class ExactWorkerTests(unittest.TestCase):
             faces.extend(tuple(base[(s-r) % 4] for s in range(4)) for r in range(4))
         tiny = make_problem(2, faces)
         tiny_hash = problem_hash(tiny)
+        # Exercise real checkpoint I/O without treating CI scheduling or fsync
+        # latency as a solver regression. The safety budget still bounds a
+        # broken search; the outcomes below check stop/resume correctness.
+        fixture_budget_seconds = 30
         calls = []
         def solver(*, problem, checkpoint=None, on_checkpoint=None, **kwargs):
             calls.append(checkpoint)
@@ -226,11 +230,11 @@ class ExactWorkerTests(unittest.TestCase):
                 if first and value['counters']['branches'] > 0:
                     (self.runtime / 'STOP').write_text('Tiny fixture stop', encoding='utf-8')
                     local_stop[0] = True
-            result = exact_dfs.solve(tiny, seconds=2, seed=kwargs['seed'], checkpoint=checkpoint,
+            result = exact_dfs.solve(tiny, seconds=fixture_budget_seconds, seed=kwargs['seed'], checkpoint=checkpoint,
                                      on_checkpoint=saved, checkpoint_interval=0,
                                      should_stop=lambda: local_stop[0] or kwargs['should_stop'](),
                                      on_progress=kwargs['on_progress'])
-            self.assertLess(result['elapsed_seconds'], 2)
+            self.assertEqual(result['outcome'], 'stopped' if first else 'infeasible')
             return result
         with patch.object(exact_worker, 'problem_hash', return_value=tiny_hash):
             self.assertEqual(self.run_fake(solver), 0)

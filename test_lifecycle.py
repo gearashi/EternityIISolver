@@ -345,6 +345,64 @@ class SolverLifecycleTests(TemporaryStateTest):
         self.assert_lock_released()
 
 
+class DashboardConstructionTests(TemporaryStateTest):
+    def test_loopback_startup_avoids_hostname_resolution(self):
+        from dashboard_server import create_server
+        identity = self.home / 'runtime' / 'dashboard.json'
+        with patch('socket.getfqdn', side_effect=AssertionError('Unexpected hostname lookup')) as lookup:
+            with create_server(self.home, port=0) as server:
+                self.assertEqual(server.server_name, 'localhost')
+                self.assertEqual(server.server_port, server.port)
+                self.assertEqual(server.port, server.socket.getsockname()[1])
+                self.assertGreater(server.port, 0)
+                saved = json.loads(identity.read_text(encoding='utf-8'))
+                self.assertEqual(saved['state'], 'running')
+                self.assertEqual(saved['port'], server.port)
+            lookup.assert_not_called()
+        self.assertEqual(json.loads(identity.read_text(encoding='utf-8'))['state'], 'stopped')
+        with RunLock(self.home / 'runtime' / 'dashboard.lock'):
+            pass
+
+    def test_initialization_errors_preserve_exception_close_socket_and_release_lock(self):
+        from dashboard_server import DashboardServer, create_server
+        runtime = self.home / 'runtime'
+        runtime.mkdir()
+        identity = runtime / 'dashboard.json'
+        previous = b'{"state":"stopped","pid":123,"port":8765}'
+        identity.write_bytes(previous)
+        for stage in ('server_bind', 'server_activate'):
+            original = OSError('deliberate ' + stage + ' failure')
+            attempted = []
+
+            def fail(server):
+                attempted.append(server)
+                raise original
+
+            with self.subTest(stage=stage), patch.object(DashboardServer, stage, fail):
+                with self.assertRaises(OSError) as caught:
+                    create_server(self.home, port=0)
+                self.assertIs(caught.exception, original)
+                self.assertEqual(attempted[0].socket.fileno(), -1)
+                self.assertFalse(attempted[0].identity_published)
+                self.assertEqual(identity.read_bytes(), previous)
+                with RunLock(runtime / 'dashboard.lock'):
+                    pass
+
+    def test_real_port_collision_does_not_publish_identity(self):
+        from dashboard_server import create_server
+        with socket.socket() as blocker:
+            blocker.bind(('127.0.0.1', 0))
+            blocker.listen()
+            with self.assertRaises(OSError):
+                create_server(self.home, port=blocker.getsockname()[1])
+        self.assertFalse((self.home / 'runtime' / 'dashboard.json').exists())
+        with RunLock(self.home / 'runtime' / 'dashboard.lock'):
+            pass
+        # The same state directory remains usable after a failed start.
+        with create_server(self.home, port=0) as server:
+            self.assertTrue(server.identity_published)
+
+
 class PersistentDashboardTests(TemporaryStateTest):
     def setUp(self):
         super().setUp()

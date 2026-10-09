@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 
 from app_paths import resource_root, state_root
 from process_control import RunLock, read_status
@@ -111,6 +112,7 @@ class DashboardServer(ThreadingHTTPServer):
         self.mutex = threading.RLock()
         self.settings = dict(DEFAULT_SETTINGS)
         self.closed = False
+        self.identity_published = False
         self.lock = RunLock(self.runtime / 'dashboard.lock').acquire()
         try:
             settings_file = self.runtime / 'dashboard-settings.json'
@@ -122,11 +124,19 @@ class DashboardServer(ThreadingHTTPServer):
             super().__init__(('127.0.0.1', port), DashboardHandler)
             self.port = self.server_address[1]
             self.save_identity('running')
+            self.identity_published = True
         except BaseException:
             if hasattr(self, 'socket'):
                 self.socket.close()
             self.lock.close()
             raise
+
+    def server_bind(self):
+        # This server binds only the numeric loopback address. HTTPServer's
+        # default getfqdn() lookup is unnecessary and can delay local startup.
+        TCPServer.server_bind(self)
+        self.server_name = 'localhost'
+        self.server_port = self.server_address[1]
 
     def save_identity(self, state):
         atomic_json(self.runtime / 'dashboard.json', {'state': state, 'pid': os.getpid(), 'port': self.port})
@@ -253,7 +263,10 @@ class DashboardServer(ThreadingHTTPServer):
             super().server_close()
         finally:
             try:
-                self.save_identity('stopped')
+                # TCPServer also calls this method if bind/listen fails during
+                # construction, before a port or running identity exists.
+                if self.identity_published:
+                    self.save_identity('stopped')
             finally:
                 self.lock.close()
 
