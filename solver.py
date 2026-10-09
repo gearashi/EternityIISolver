@@ -18,7 +18,7 @@ def atomic_json(path,value):
 def digest(board):return hashlib.sha256(np.asarray(board,dtype='<u2').tobytes()).hexdigest()
 def now():return datetime.datetime.now(datetime.timezone.utc).isoformat()
 def main(argv=None,engine_factory=None):
-    p=argparse.ArgumentParser();p.add_argument('--forever',action='store_true');p.add_argument('--seconds',type=float,default=60);p.add_argument('--replicas',type=int,default=4096);p.add_argument('--seed',type=int,default=20261007);p.add_argument('--no-library',action='store_true');p.add_argument('--no-dashboard',action='store_true');p.add_argument('--preserve-stop',action='store_true');p.add_argument('--port',type=int,default=8765);p.add_argument('--backend',choices=['auto','cuda','opencl'],default='auto');p.add_argument('--state-dir',type=Path);a=p.parse_args(argv)
+    p=argparse.ArgumentParser();p.add_argument('--forever',action='store_true');p.add_argument('--seconds',type=float,default=60);p.add_argument('--replicas',type=int,default=4096);p.add_argument('--seed',type=int,default=20261007);p.add_argument('--no-library',action='store_true',help='Skip local cached-board checks; no external networking');p.add_argument('--no-dashboard',action='store_true');p.add_argument('--preserve-stop',action='store_true');p.add_argument('--port',type=int,default=8765);p.add_argument('--backend',choices=['auto','cuda','opencl'],default='auto');p.add_argument('--state-dir',type=Path);a=p.parse_args(argv)
     if not 32<=a.replicas<=32768:raise ValueError('replicas must be32..32768')
     if not 1<=a.port<=65535:raise ValueError('port must be 1..65535')
     if not np.isfinite(a.seconds) or a.seconds<0:raise ValueError('seconds must be finite and nonnegative')
@@ -29,27 +29,67 @@ def main(argv=None,engine_factory=None):
         if v['valid'] and v['score']>=bestscore:globalbest=prior['board'];bestscore=v['score']
     lock=RunLock(runtime/'run.lock').acquire()
     if not a.preserve_stop:(runtime/'STOP').unlink(missing_ok=True)
-    status={'state':'starting','pid':os.getpid(),'last_update':now(),'best_score':bestscore,'source_best_score':466,'replicas':a.replicas,'port':a.port,'state_dir':str(home)}
+    status={'state':'starting','pid':os.getpid(),'last_update':now(),'best_score':bestscore,'source_best_score':466,'replicas':a.replicas,'port':a.port,'state_dir':str(home),'external_network_enabled':False,'search_method':'gpu-board-repair','counter_semantics':'local move attempts; not DFS nodes or BOINC credit'}
     monitor=None;server=None;gpu=None;db=None;state_lock=threading.Lock();old_signals={}
     def request_stop(*_):
         (runtime/'STOP').write_text('Stop requested by interrupt or termination signal\n',encoding='utf-8')
     class Handler(BaseHTTPRequestHandler):
+        def setup(self):
+            super().setup();self.connection.settimeout(5)
         def log_message(self,*unused):pass
+        def send_payload(self,value,code=200,mime='application/json; charset=utf-8',filename=None):
+            payload=value if isinstance(value,bytes) else json.dumps(value).encode('utf-8')
+            self.send_response(code);self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(payload)))
+            if filename is not None:self.send_header('Content-Disposition',f'attachment; filename="{filename}"')
+            self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')
+            self.send_header('Content-Security-Policy',"default-src 'self'; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'")
+            self.end_headers();self.wfile.write(payload)
+        def local_request(self):
+            port=self.server.server_address[1];host=self.headers.get('Host')
+            if host not in (f'127.0.0.1:{port}',f'localhost:{port}'):
+                self.send_payload({'error':'Local dashboard Host required'},403);return False
+            origin=self.headers.get('Origin')
+            if origin is not None and origin!='http://'+host:
+                self.send_payload({'error':'Same-origin dashboard request required'},403);return False
+            return True
         def do_GET(self):
-            if self.path in ('/','/Dashboard.html'):
-                payload=(ROOT/'Dashboard.html').read_bytes();mime='text/html; charset=utf-8'
-            elif self.path=='/status':
-                with state_lock:payload=json.dumps(status).encode()
-                mime='application/json'
-            elif self.path=='/board':payload=json.dumps({'board':globalbest,'faces':bundle.oriented_edges}).encode();mime='application/json'
-            else:self.send_error(404);return
-            self.send_response(200);self.send_header('Content-Type',mime);self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(payload)
+            if not self.local_request():return
+            try:
+                if self.path in ('/','/Dashboard.html'):
+                    self.send_payload((ROOT/'Dashboard.html').read_bytes(),mime='text/html; charset=utf-8')
+                elif self.path=='/status':
+                    with state_lock:payload=json.dumps(status).encode('utf-8')
+                    self.send_payload(payload)
+                elif self.path=='/board':self.send_payload({'board':globalbest,'faces':bundle.oriented_edges})
+                elif self.path.startswith('/exports/'):
+                    from dashboard_server import resolve_exported_file
+                    path=resolve_exported_file(home,self.path)
+                    mime='application/json; charset=utf-8' if path.suffix=='.json' else 'text/plain; charset=utf-8'
+                    self.send_payload(path.read_bytes(),mime=mime,filename=path.name)
+                else:self.send_payload({'error':'Unknown endpoint'},404)
+            except (OSError,ValueError):self.send_payload({'error':'Requested file is unavailable'},404)
         def do_POST(self):
-            if self.path!='/stop':self.send_error(404);return
-            origin=self.headers.get('Origin','')
-            if origin and origin not in (f'http://127.0.0.1:{a.port}',f'http://localhost:{a.port}'):
-                self.send_error(403);return
-            (runtime/'STOP').write_text('User stopped from local dashboard\n');self.send_response(202);self.end_headers();self.wfile.write(b'{"stopping":true}')
+            if not self.local_request():return
+            if self.path=='/stop':
+                (runtime/'STOP').write_text('User stopped from local dashboard\n',encoding='utf-8');self.send_payload({'stopping':True},202);return
+            if self.path!='/export-best':self.send_payload({'error':'Unknown endpoint'},404);return
+            if self.headers.get_content_type()!='application/json':
+                self.send_payload({'error':'Content-Type application/json required'},415);return
+            try:
+                raw_length=self.headers.get('Content-Length','')
+                if self.headers.get('Transfer-Encoding') is not None or not raw_length.isdecimal():
+                    raise ValueError('A valid Content-Length is required without Transfer-Encoding')
+                length=int(raw_length)
+                if not 1<=length<=4096:
+                    self.send_payload({'error':'JSON body must contain 1 to 4096 bytes'},413);return
+                raw=self.rfile.read(length)
+                if len(raw)!=length:raise ValueError('Incomplete request body')
+                value=json.loads(raw)
+                if not isinstance(value,dict) or value:raise ValueError('Export expects an empty JSON object')
+                from dashboard_server import export_best_response
+                self.send_payload(export_best_response(home),201)
+            except (ValueError,TypeError,OverflowError) as exc:self.send_payload({'error':str(exc)},400)
+            except OSError as exc:self.send_payload({'error':str(exc)},500)
     try:
         if threading.current_thread() is threading.main_thread():
             for sig in (signal.SIGINT,signal.SIGTERM):
@@ -67,13 +107,13 @@ def main(argv=None,engine_factory=None):
             if doc['board'] not in seeds:seeds.append(doc['board'])
         if not a.no_library:
             from library_cache import LibraryMonitor
-            monitor=LibraryMonitor(home/'library',interval_seconds=900,pieces_path=ROOT/'data/pieces.txt')
+            monitor=LibraryMonitor(home/'library',pieces_path=ROOT/'data/pieces.txt')
             for file in [ROOT/'data/record466.json',*sorted((ROOT/'data/seeds').glob('*.json'))]:
                 try:
                     doc=json.loads(file.read_text())
                     if 'board' in doc:monitor.register_known_document(doc,'2c037e70f7e93518a48733c7aacd096226b7f23728efabd6289088b91c0945cd' if file.name=='record466.json' else file.stem)
                 except Exception as e:status['library_seed_warning']=str(e)
-            monitor.start()
+            # The cache is local only; there is no polling/downloading worker.
         if engine_factory is None:
             from gpu_engine import create_engine
             engine_factory=create_engine
@@ -122,7 +162,7 @@ def main(argv=None,engine_factory=None):
                 db.commit();previous=personal
                 counters=gpu.counters.get();proposals=int(counters[:a.replicas].sum());accepted=int(counters[a.replicas:].sum())
                 gpu.verify_device_scores(gpu.host_rng.choice(a.replicas,min(8,a.replicas),replace=False))
-                with state_lock:status.update(last_update=now(),elapsed_seconds=round(elapsed,1),best_score=bestscore,proposed_moves=proposals,accepted_moves=accepted,moves_per_second=round((proposals-last_proposals)/max(stamp-last_report,1e-9)),kernel_ms=round(kernel_ms,2),steps_per_batch=steps,batches=batch_count,duplicate_results=duplicates,new_results=novel,pending_novelty_checks=pending,strategies=gpu.strategy_status(),library=monitor.status() if monitor else {'enabled':False})
+                with state_lock:status.update(last_update=now(),elapsed_seconds=round(elapsed,1),best_score=bestscore,proposed_moves=proposals,accepted_moves=accepted,moves_per_second=round((proposals-last_proposals)/max(stamp-last_report,1e-9)),kernel_ms=round(kernel_ms,2),steps_per_batch=steps,batches=batch_count,duplicate_results=duplicates,new_results=novel,pending_novelty_checks=pending,strategies=gpu.strategy_status(),library=monitor.status() if monitor else {'enabled':False,'network_enabled':False,'mode':'offline'})
                 atomic_json(runtime/'status.json',status);last_report=stamp;last_proposals=proposals
             if stop_reason:
                 status['state']='solved' if bestscore==480 else stop_reason
@@ -139,7 +179,10 @@ def main(argv=None,engine_factory=None):
         try:
             if db:db.close()
             if monitor:
-                monitor.stop();status['library']=monitor.status()
+                try:
+                    monitor.stop();status['library']=monitor.status()
+                finally:
+                    monitor.close()
             status.update(last_update=now(),best_score=bestscore);atomic_json(runtime/'status.json',status)
         finally:
             if server:server.shutdown();server.server_close()

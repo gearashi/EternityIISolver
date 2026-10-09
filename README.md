@@ -1,8 +1,12 @@
 # Eternity II Solver
 
-A local GPU search application for the **five-clue Eternity II puzzle**. It starts from an independently verified **466/480** board, runs parallel searches, checks improvements on the CPU, and displays progress in a local browser dashboard. It supports NVIDIA through CUDA and AMD, Intel, Apple, or NVIDIA GPUs through OpenCL when compatible drivers are available.
+An **offline GPU board-repair application** for the **five-clue Eternity II puzzle**. It starts from an independently verified **466/480** board, explores swaps and rotations in parallel, checks improvements on the CPU, and displays local activity in a browser dashboard. It supports NVIDIA through CUDA and AMD, Intel, Apple, or NVIDIA GPUs through OpenCL when compatible drivers are available.
 
-The application does not guarantee a 480/480 solution. Public records from other clue modes, including 470 boards, are not equivalent to a five-clue result and are not silently substituted for the bundled starting board.
+Repair can plateau and does not guarantee a 480/480 solution. Local move counts measure attempted swaps and rotations; they are not BOINC DFS nodes, completed workunits, or credit. Public records from other clue modes, including 470 boards, are not equivalent to a five-clue result.
+
+The GPU DFS port is **on hold**. No CPU replacement worker is being developed. The existing read-only workunit inspector remains available for examining saved inputs; it does not execute assigned work or submit results.
+
+**Version boundary:** the offline behavior described here applies to the v0.1.1 update. Legacy **v0.1.0** can automatically synchronize the public library; it does not acquire the new behavior without upgrading.
 
 ## Download and start
 
@@ -33,10 +37,11 @@ EternityIISolver stop
 EternityIISolver status --json
 EternityIISolver validate
 EternityIISolver validate saved-board.json
+EternityIISolver export-best --state-dir PATH
 EternityIISolver diagnose --backend opencl --replicas 128
 ```
 
-`open` and the default no-argument launch open the persistent local dashboard. `start` additionally starts the worker. `run` runs the worker in the foreground; `--seconds 60` makes it bounded, otherwise it continues until stopped, an error occurs, or a validated solution is found. `--no-library` disables public-library synchronization. `--no-browser` is available with `start`. Use `--help` on a command for its options.
+`open` and the default no-argument launch open the persistent local dashboard. `start` additionally starts the worker. `run` runs the worker in the foreground; `--seconds 60` makes it bounded, otherwise it continues until stopped, an error occurs, or a validated solution is found. Runtime library downloads are disabled. `--no-library` skips local cache checks; it is not needed to prevent networking. `--no-browser` is available with `start`. Use `--help` on a command for its options.
 
 For AMD or Intel GPUs, use `--backend opencl`. When several OpenCL devices exist, `ETERNITY_OPENCL_DEVICE` and `ETERNITY_OPENCL_PLATFORM` can filter device/platform names. `--backend cuda` selects NVIDIA CUDA explicitly; `auto` tries the available supported backends.
 
@@ -62,11 +67,11 @@ python -m pip install ".[cuda]"
 eternity-solver open
 ```
 
-A GitHub release wheel can also be installed with `python -m pip install path/to/eternity_ii_solver-0.1.0-py3-none-any.whl`. Install the CUDA extra from the source checkout if desired. The repository is not claimed to be published on PyPI.
+A GitHub release wheel can also be installed with `python -m pip install path/to/eternity_ii_solver-0.1.1-py3-none-any.whl` when that release is available. Install the CUDA extra from the source checkout if desired. Downloading releases, installing dependencies, and manually opening documentation links require internet access; normal application operation does not. The repository is not claimed to be published on PyPI.
 
 PyOpenCL and a hardware-vendor OpenCL implementation are separate requirements. A successful Python installation alone does not supply an AMD/Intel/NVIDIA GPU driver. See [PyOpenCL installation](https://documen.tician.de/pyopencl/misc.html#installation) and [CuPy installation](https://docs.cupy.dev/en/stable/install.html) for supported runtime configurations.
 
-## Saved state and public library
+## Saved state and offline cache
 
 Application resources are read-only. Runtime state is stored separately:
 
@@ -78,13 +83,17 @@ Application resources are read-only. Runtime state is stored separately:
 
 Use a command's `--state-dir PATH` option or the `ETERNITY_SOLVER_HOME` environment variable to choose another directory. Keep the state directory if you want to retain checkpoints and the board cache across upgrades. Dashboard/worker logs, current status, checkpoints, the library cache, and verified results live there; they are not written into the app bundle. The solver restores compatible checkpoints and validates them before use.
 
-The library initially loads its public metadata index, then downloads full board arrangements gradually, highest scores first, at approximately one request per second. Indexed records are **not** fully cached arrangements. Duplicate detection uses exact cached placements; when the relevant score tier is incomplete, novelty remains unknown. Being absent from a cached index snapshot is not a claim of worldwide novelty. Normal desktop search does not submit results to BOINC. The separate [experimental BOINC wrapper adapter](docs/BOINC.md) accepts bounded workunits, writes checkpoint/progress files and independently checked results; project-side deployment still requires team testing.
+The application uses bundled and previously saved board data only. It does not automatically refresh the public index, download board arrangements, upload results, or send telemetry. The dashboard connects only to its local server; its research link opens an external website only when selected. Cached metadata is **not** a complete set of cached arrangements, and the snapshot may be old. An absent board cannot establish worldwide novelty.
 
-The development [CPU workunit inspector](docs/BOINC_CPU.md) reads existing Eternity@Home assignments, checks their starting roots, and enumerates original ticket IDs without running a search. It is a foundation for CPU-compatible DFS integration; a compatible GPU DFS worker is not implemented yet.
+Click **Export best board**, or run `EternityIISolver export-best --state-dir PATH`, to validate and save the best available board under the state directory's `exports/` folder. Omit `--state-dir PATH` to use the normal state directory. Export works while the search is stopped and provides board JSON, a readable layout, and a validation report. The dashboard keeps local download links visible for review. Nothing is uploaded automatically. The JSON uses library-style candidate fields; the project's accepted upload schema is unconfirmed, and these files are not completed CPU workunits or proof of search coverage. Review the files before any manual sharing.
+
+The [CPU workunit inspector](docs/BOINC_CPU.md) checks selected assignment inputs and enumerates ticket IDs without running a search. BOINC integration is on hold. The separate bounded-repair interface and wrapper examples in [BOINC.md](docs/BOINC.md) are research material, not an approved project application. Do not install them as an anonymous-platform replacement or submit their results as completed production CPU tickets.
+
+A project message supplied by the user reports that the project's tested GPU DFS implementation was about **7,000× slower** than its CPU implementation, and that tested repair approaches plateaued. Those measurements have not been independently reproduced here and do not establish the performance of every GPU algorithm. The message also requires project-controlled production-build validation and says anonymous-platform replacement is disabled. Local move throughput is not evidence of a BOINC speedup.
 
 ## Search and validation
 
-The GPU evaluates swaps and rotations across many replicas, uses temperature schedules to escape local optima, and periodically reseeds part of the population. The CPU independently verifies each promoted improvement against every piece, all 480 internal adjacencies, the gray frame, and the five fixed clue states. A legal partial arrangement is not a solved board: the validator's `complete` field requires 480 matched edges.
+The GPU evaluates swaps and rotations across many replicas, uses temperature schedules to explore beyond local optima, and periodically perturbs part of the population as part of that search. The CPU independently verifies each promoted improvement against every piece, all 480 internal adjacencies, the gray frame, and the five fixed clue states. A legal partial arrangement is not a solved board: the validator's `complete` field requires 480 matched edges. Updating the application does not require deleting checkpoints or resetting a search.
 
 The imported 466 board is credited to its public source, not presented as a discovery by this software. [DATA_PROVENANCE.md](DATA_PROVENANCE.md) records source attribution and hashes. Board states use `4 * (piece ID - 1) + clockwise rotation`, with zero-based row-major cells. Source piece edges are U,D,L,R; oriented solver edges are U,R,D,L.
 
@@ -93,7 +102,7 @@ The imported 466 board is credited to its public source, not presented as a disc
 CPU tests require no GPU and do not start a continuous search:
 
 ```sh
-python -m unittest test_validator test_library_cache test_lifecycle test_gpu_backends test_boinc_worker test_boinc_cpu_workunit -v
+python -m unittest test_validator test_library_cache test_lifecycle test_gpu_backends test_boinc_worker test_boinc_cpu_workunit test_manual_export -v
 python -m unittest discover -s boinc -p "test_*.py" -v
 python launcher.py validate
 ```
@@ -120,7 +129,7 @@ python scripts/build_release.py --flavor opencl
 
 Build on the target operating system and architecture; PyInstaller does not cross-compile these archives. Each build validates the bundled 466 board, reads status and loads the diagnostic/BOINC command help from the frozen executable before archiving. `release-assets/` receives the native archive and its SHA-256 file. To build Python packages, run `python -m build`; `scripts/check_wheel.py` checks that a wheel contains the curated resources and excludes runtime data.
 
-GitHub Actions builds Windows x64, Linux x64, macOS Intel, and macOS ARM separately. Branch/PR runs expose downloadable workflow artifacts. A pushed version tag such as `v0.1.0` must match `pyproject.toml`; after every build succeeds, the workflow publishes the native archives, Python wheel/source archive, and checksums to a GitHub release. A built package and a successful CPU smoke test do not establish compatibility with every GPU or driver.
+GitHub Actions builds Windows x64, Linux x64, macOS Intel, and macOS ARM separately. Branch/PR runs expose downloadable workflow artifacts. A pushed version tag such as `v0.1.1` must match `pyproject.toml`; after every build succeeds, the workflow publishes the native archives, Python wheel/source archive, and checksums to a GitHub release. A built package and a successful CPU smoke test do not establish compatibility with every GPU or driver.
 
 ## License
 

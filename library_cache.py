@@ -1,7 +1,8 @@
-"""Public library metadata plus a resumable exact-board cache; standard library only.
+"""Offline library metadata and a persistent exact-board cache.
 
 The public SHA convention is unknown. Never equate it to the local digest.
-is_known returns None until the candidate's score tier is fully cached.
+is_known returns None until the candidate's score tier is fully cached in the
+saved snapshot. No method opens a network connection or starts a downloader.
 """
 import gzip
 import hashlib
@@ -13,12 +14,9 @@ import sqlite3
 import struct
 import threading
 import time
-import urllib.error
-import urllib.request
 import uuid
 from pathlib import Path
 
-API = 'https://eternity-control-plane-prod.eternity-cp.workers.dev'
 CLUES = {34:831,45:1019,135:554,210:723,221:992}
 SHA_RE = re.compile(r'^[0-9a-f]{64}$')
 EDGES = [(i,i+1,1,3) for i in range(256) if i%16<15]+[(i,i+16,2,0) for i in range(240)]
@@ -46,9 +44,11 @@ class LibraryMonitor:
         self.interval_seconds=max(1,float(interval_seconds))
         self.request_timeout=float(request_timeout)
         self.detail_interval_seconds=max(1.0,float(detail_interval_seconds))
-        self._lock=threading.RLock();self._poll_lock=threading.Lock()
-        self._stop=threading.Event();self._thread=None
+        # Legacy timing arguments are accepted for existing callers/settings.
+        # They do not enable polling, requests, or background work.
+        self._lock=threading.RLock();self._thread=None
         self._db=sqlite3.connect(self.data_dir/'library.sqlite3',check_same_thread=False)
+        self._closed=False
         self._db.execute('PRAGMA journal_mode=WAL')
         self._db.executescript('''
         CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -60,7 +60,7 @@ class LibraryMonitor:
         CREATE INDEX IF NOT EXISTS board_pending ON boards(active,has_content,local_sha,score);
         ''');self._db.commit()
         self._known={r[0] for r in self._db.execute('SELECT local_sha FROM boards WHERE local_sha IS NOT NULL')}
-        self._faces=None;self._last_error=None;self._requests=0;self._detail_downloads=0
+        self._faces=None;self._last_error=None
         stored=self._meta('canonical_faces')
         if stored:self._set_base(json.loads(stored))
         if pieces_path:
@@ -71,7 +71,7 @@ class LibraryMonitor:
             # Do not replace an existing letter-based palette: both are valid labels.
             if self._faces is None:self._set_base(base,persist=True)
         bootstrap=self.data_dir/'library-index.json'
-        if not self._meta('index_checked_at') and bootstrap.is_file():
+        if not self._index_loaded() and bootstrap.is_file():
             self.ingest_index(json.loads(bootstrap.read_text(encoding='utf-8')))
 
     def _meta(self,key):
@@ -81,29 +81,15 @@ class LibraryMonitor:
     def _put_meta(self,key,value):
         self._db.execute('INSERT INTO metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(key,str(value)))
 
+    def _index_loaded(self):
+        # Retain indexes from older cache versions without modifying their
+        # historical check timestamp. New local imports have their own clock.
+        return bool(self._meta('index_loaded_at') or self._meta('index_checked_at'))
+
     def _set_base(self,base,persist=False):
         self._faces=[tuple(p[(side-rot)%4] for side in range(4)) for p in base for rot in range(4)]
         if persist:
             self._put_meta('canonical_faces',json.dumps(base,separators=(',',':')));self._db.commit()
-
-    def _request(self,url,headers=None):
-        headers={'Accept-Encoding':'gzip','User-Agent':'EternityIISolver-library-monitor/1.0',**(headers or {})}
-        req=urllib.request.Request(url,headers=headers)
-        try:
-            with urllib.request.urlopen(req,timeout=self.request_timeout) as response:
-                data=response.read(80*1024*1024+1)
-                if len(data)>80*1024*1024:raise ValueError('Compressed response size limit')
-                return response.status,dict(response.headers),data
-        except urllib.error.HTTPError as exc:
-            if exc.code==304:return 304,dict(exc.headers),b''
-            raise
-
-    @staticmethod
-    def _decode(headers,data):
-        headers={k.lower():v for k,v in headers.items()}
-        if headers.get('content-encoding','').lower()=='gzip':data=gzip.decompress(data)
-        if len(data)>160*1024*1024:raise ValueError('Decoded response size limit')
-        return json.loads(data)
 
     @staticmethod
     def _validate_index(doc):
@@ -120,7 +106,7 @@ class LibraryMonitor:
         return parsed
 
     def ingest_index(self,doc,headers=None):
-        """Load an existing verified public index without downloading it again."""
+        """Validate and ingest a supplied local index; do not claim freshness."""
         parsed=self._validate_index(doc);headers={k.lower():v for k,v in (headers or {}).items()}
         payload=gzip.compress(json.dumps(doc,separators=(',',':')).encode(),compresslevel=1)
         temporary=self.data_dir/('index.'+uuid.uuid4().hex+'.tmp')
@@ -129,28 +115,14 @@ class LibraryMonitor:
             self._db.execute('UPDATE boards SET active=0')
             self._db.executemany('''INSERT INTO boards(public_sha,score,has_content,active) VALUES(?,?,?,1)
                 ON CONFLICT(public_sha) DO UPDATE SET score=excluded.score,has_content=excluded.has_content,active=1''',parsed)
-            self._put_meta('index_checked_at',time.time());self._put_meta('index_generated_at',doc.get('generated_at',''))
+            self._put_meta('index_loaded_at',time.time());self._put_meta('index_generated_at',doc.get('generated_at',''))
             self._put_meta('etag',headers.get('etag',''));self._put_meta('last_modified',headers.get('last-modified',''))
             self._last_error=None
         return len(parsed)
 
     def poll_once(self):
-        """Refresh all metadata; retain the previous snapshot on network/schema errors."""
-        with self._poll_lock:
-            try:
-                with self._lock:
-                    headers={};etag=self._meta('etag');modified=self._meta('last_modified')
-                    if etag:headers['If-None-Match']=etag
-                    if modified:headers['If-Modified-Since']=modified
-                status,h,data=self._request(API+'/library/index',headers)
-                with self._lock:self._requests+=1
-                if status==304:
-                    with self._lock,self._db:self._put_meta('index_checked_at',time.time());self._last_error=None
-                elif status==200:self.ingest_index(self._decode(h,data),h)
-                else:raise ValueError('Unexpected HTTP status '+str(status))
-            except Exception as exc:
-                with self._lock:self._last_error=f'{type(exc).__name__}: {exc}'
-            return self.status()
+        """Compatibility no-op: return local status without refreshing anything."""
+        return self.status()
 
     def _score(self,board):
         board_bytes(board)
@@ -193,31 +165,15 @@ class LibraryMonitor:
         return digest
 
     def warm_once(self):
-        """Fetch at most one missing geometry; background loop limits request rate."""
-        with self._lock:
-            row=self._db.execute('''SELECT public_sha FROM boards WHERE active=1 AND has_content=1
-                AND local_sha IS NULL AND retry_after<=? ORDER BY score DESC,public_sha LIMIT 1''',(time.time(),)).fetchone()
-        if not row:return False
-        sha=row[0]
-        try:
-            status,headers,data=self._request(API+'/library/board/'+sha)
-            with self._lock:self._requests+=1
-            if status!=200:raise ValueError('Unexpected document status '+str(status))
-            self.register_known_document(self._decode(headers,data),sha)
-            with self._lock:self._detail_downloads+=1
-            return True
-        except Exception as exc:
-            with self._lock,self._db:
-                self._last_error=f'{type(exc).__name__}: {exc}'
-                self._db.execute('UPDATE boards SET failures=failures+1,retry_after=? WHERE public_sha=?',(time.time()+900,sha))
-            return False
+        """Compatibility no-op: missing geometries remain unknown offline."""
+        return False
 
     def is_known(self,board):
-        """True=exact public duplicate; False=absent in complete score tier; None=unknown."""
+        """True=exact saved duplicate; False=absent in complete saved tier; None=unknown."""
         digest=local_board_hash(board)
         with self._lock:
             if digest in self._known:return True
-            if not self._meta('index_checked_at'):return None
+            if not self._index_loaded():return None
             score=self._score(board)
             if score is None:return None
             missing=self._db.execute('SELECT COUNT(*) FROM boards WHERE active=1 AND score=? AND local_sha IS NULL',(score,)).fetchone()[0]
@@ -229,36 +185,35 @@ class LibraryMonitor:
             tiers={str(score):{'indexed':count,'cached':int(got or 0)} for score,count,got in self._db.execute(
                 'SELECT score,COUNT(*),SUM(local_sha IS NOT NULL) FROM boards WHERE active=1 GROUP BY score ORDER BY score DESC')}
             checked=self._meta('index_checked_at')
-            return {'schema_version':1,'running':bool(self._thread and self._thread.is_alive()),'indexed_boards':total,
+            loaded=self._meta('index_loaded_at');has_index=self._index_loaded()
+            return {'schema_version':1,'running':False,'network_enabled':False,'mode':'offline',
+                'automatic_polling_enabled':False,'online_freshness_verified':False,
+                'snapshot_stale':True if has_index else None,'indexed_boards':total,
                 'cached_geometries':int(cached or 0),'known_exact_boards':len(self._known),'tiers':tiers,
                 'pending_geometries':total-int(cached or 0),
                 'high_score_indexed':sum(v['indexed'] for s,v in tiers.items() if int(s)>=465),
                 'high_score_cached':sum(v['cached'] for s,v in tiers.items() if int(s)>=465),
                 'highest_indexed_score':max(map(int,tiers),default=None),
-                'full_metadata_loaded':checked is not None,'geometry_cache_complete':bool(checked and total==int(cached or 0)),
+                'full_metadata_loaded':has_index,'geometry_cache_complete':bool(has_index and total==int(cached or 0)),
                 'last_index_check_unix':float(checked) if checked else None,'index_generated_at':self._meta('index_generated_at'),
+                'last_local_index_load_unix':float(loaded) if loaded else None,
                 'poll_interval_seconds':self.interval_seconds,'detail_interval_seconds':self.detail_interval_seconds,
-                'last_error':self._last_error,'network_requests_this_session':self._requests,
-                'detail_downloads_this_session':self._detail_downloads,
-                'public_hash_formula':'unverified; lookup uses exact downloaded placements and local SHA256 uint16 little endian',
-                'novelty_scope':'False means absent from cached current index snapshot, not from future publications.'}
-
-    def _loop(self):
-        next_poll=0
-        while not self._stop.is_set():
-            started=time.monotonic()
-            if started>=next_poll:
-                self.poll_once();next_poll=time.monotonic()+self.interval_seconds
-            if self._stop.is_set():break
-            self.warm_once()
-            self._stop.wait(max(0,self.detail_interval_seconds-(time.monotonic()-started)))
+                'last_error':self._last_error,'network_requests_this_session':0,
+                'detail_downloads_this_session':0,
+                'public_hash_formula':'unverified; lookup uses exact saved placements and local SHA256 uint16 little endian',
+                'novelty_scope':'False means absent from the saved index snapshot; it does not establish absence from the current public library.'}
 
     def start(self):
-        with self._lock:
-            if self._thread and self._thread.is_alive():return
-            self._stop.clear();self._thread=threading.Thread(target=self._loop,name='eternity-library-monitor',daemon=True);self._thread.start()
+        """Compatibility no-op: an offline cache has no background thread."""
+        return None
 
     def stop(self,timeout=25):
-        self._stop.set()
-        if self._thread:self._thread.join(timeout)
-        return not (self._thread and self._thread.is_alive())
+        """Compatibility no-op; retained timeout never causes a wait."""
+        return True
+
+    def close(self):
+        """Release SQLite handles after the caller's final status snapshot."""
+        with self._lock:
+            if not self._closed:
+                self._db.close()
+                self._closed=True

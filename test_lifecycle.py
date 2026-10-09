@@ -248,6 +248,22 @@ class SolverLifecycleTests(TemporaryStateTest):
         with RunLock(self.home / 'runtime' / 'run.lock'):
             pass
 
+    def test_local_cache_enabled_never_connects_to_external_services(self):
+        args = ['--state-dir', str(self.home), '--no-dashboard', '--replicas', '32', '--seconds', '0']
+        with patch('socket.create_connection', side_effect=AssertionError('unexpected network')) as connection, \
+             patch('socket.socket.connect', side_effect=AssertionError('unexpected socket')) as connect, \
+             patch('urllib.request.urlopen', side_effect=AssertionError('unexpected HTTP')) as http, \
+             redirect_stdout(io.StringIO()):
+            self.assertEqual(self.solver.main(args, engine_factory=self.factory), 0)
+        connection.assert_not_called(); connect.assert_not_called(); http.assert_not_called()
+        status = self.saved_status()
+        self.assertFalse(status['external_network_enabled'])
+        self.assertEqual(status['search_method'], 'gpu-board-repair')
+        self.assertEqual(status['library']['mode'], 'offline')
+        self.assertEqual(status['library']['network_requests_this_session'], 0)
+        self.assertFalse(status['library']['network_enabled'])
+        self.assertGreater(status['library']['known_exact_boards'], 0)
+
     def test_zero_duration_checkpoints_and_resumes_without_moves(self):
         previous_handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
         self.assertEqual(self.run_solver('--seconds', '0'), 0, self.saved_status())
@@ -275,6 +291,15 @@ class SolverLifecycleTests(TemporaryStateTest):
             self.assertEqual(live['pid'], os.getpid())
             with opener.open(base + '/board', timeout=3) as response:
                 self.assertEqual(json.load(response)['board'], list(engine.bundle.record_board))
+            export_request = urllib.request.Request(base + '/export-best', data=b'{}',
+                headers={'Origin':base, 'Content-Type':'application/json'})
+            with opener.open(export_request, timeout=3) as response:
+                self.assertEqual(response.status, 201)
+                exported = json.load(response)
+            with opener.open(base + exported['json_url'], timeout=3) as response:
+                candidate = json.load(response)
+            self.assertEqual(candidate['board'], list(engine.bundle.record_board))
+            self.assertFalse((self.home / 'runtime' / 'STOP').exists())
             foreign = urllib.request.Request(base + '/stop', data=b'', headers={'Origin': 'https://foreign.invalid'})
             with self.assertRaises(urllib.error.HTTPError) as rejected:
                 opener.open(foreign, timeout=3)
@@ -378,6 +403,56 @@ class PersistentDashboardTests(TemporaryStateTest):
         self.assertEqual(metadata['state'], 'running')
         self.assertEqual(metadata['port'], self.server.port)
 
+    def test_manual_export_saves_and_downloads_without_starting_search(self):
+        stop = self.home / 'runtime' / 'STOP'
+        stop.write_text('keep stopped', encoding='utf-8')
+        code, exported = self.request('/export-best', {})
+        self.assertEqual(code, 201, exported)
+        self.assertEqual(exported['score'], 466)
+        self.assertEqual(self.spawned, [])
+        self.assertEqual(stop.read_text(encoding='utf-8'), 'keep stopped')
+        for name in ('json', 'layout', 'validation'):
+            url = exported[name + '_url']
+            self.assertTrue(url.startswith('/exports/'))
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(self.base + url, timeout=3) as response:
+                self.assertIn('attachment;', response.headers['Content-Disposition'])
+                self.assertIn("connect-src 'self'", response.headers['Content-Security-Policy'])
+                raw = response.read()
+            self.assertEqual(raw, Path(exported[name + '_path']).read_bytes())
+        document = json.loads(Path(exported['json_path']).read_text(encoding='utf-8'))
+        from validator import validate_board
+        self.assertEqual(validate_board(document['board'])['score'], 466)
+        self.assertEqual(self.request('/export-best', {'output_dir':'outside'})[0], 400)
+        self.assertEqual(self.request('/export-best', {}, headers={'Origin':'https://foreign.invalid'})[0], 403)
+        for unsafe in ('/exports/../runtime/best.json', '/exports/%2e%2e/board.json', '/exports/example/other.json'):
+            self.assertEqual(self.request(unsafe)[0], 404)
+
+    def test_active_legacy_worker_is_not_claimed_offline(self):
+        (self.home / 'runtime' / 'status.json').write_text(json.dumps({
+            'state':'running', 'pid':os.getpid(),
+            'library':{'running':True, 'network_requests_this_session':85},
+        }), encoding='utf-8')
+        _, status = self.request('/status')
+        self.assertIsNone(status['external_network_enabled'])
+        self.assertIsNone(status['library']['network_enabled'])
+        self.assertEqual(status['library']['mode'], 'legacy-unverified')
+        self.assertEqual(status['library']['network_requests_this_session'], 85)
+        self.assertIn('older worker', status['legacy_worker_warning'])
+
+    def test_dashboard_marks_legacy_library_status_offline(self):
+        (self.home / 'runtime' / 'status.json').write_text(json.dumps({
+            'state':'stopped', 'pid':0,
+            'library':{'running':True, 'network_requests_this_session':85, 'cached_geometries':12000},
+        }), encoding='utf-8')
+        _, status = self.request('/status')
+        self.assertFalse(status['external_network_enabled'])
+        self.assertFalse(status['library']['network_enabled'])
+        self.assertFalse(status['library']['running'])
+        self.assertEqual(status['library']['mode'], 'offline')
+        self.assertEqual(status['library']['previous_run_network_requests'], 85)
+        self.assertEqual(status['library']['network_requests_this_session'], 0)
+        self.assertEqual(status['library']['cached_geometries'], 12000)
+
     def test_concurrent_start_is_single_worker_and_stop_keeps_dashboard_alive(self):
         settings = {'replicas': 512, 'backend': 'opencl', 'seed': 123, 'no_library': True, 'seconds': 0}
         with ThreadPoolExecutor(max_workers=4) as pool:
@@ -464,6 +539,43 @@ class PersistentDashboardTests(TemporaryStateTest):
         # The worker uses an independent lock and can start under the supervisor.
         with RunLock(self.home / 'runtime' / 'run.lock'):
             pass
+
+
+class LocalControlNetworkTests(unittest.TestCase):
+    def test_non_loopback_requests_rejected_before_opening_socket(self):
+        import launcher
+        with patch('urllib.request.build_opener') as opener:
+            for url in ('https://example.invalid/', 'http://example.invalid/',
+                        'http://127.0.0.1.example.invalid/', 'http://user@127.0.0.1/', 'file:///tmp/test'):
+                with self.subTest(url=url), self.assertRaises(ValueError):
+                    launcher.local_urlopen(url, timeout=1)
+        opener.assert_not_called()
+
+    def test_local_controls_ignore_proxies_and_reject_redirects(self):
+        import launcher
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_): pass
+            def do_GET(self):
+                if self.path == '/redirect':
+                    self.send_response(302)
+                    self.send_header('Location', 'https://example.invalid/telemetry')
+                    self.end_headers()
+                else:
+                    self.send_response(200); self.end_headers(); self.wfile.write(b'local')
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .02}, daemon=True)
+        thread.start()
+        try:
+            base = f'http://127.0.0.1:{server.server_address[1]}'
+            with patch.dict(os.environ, {'http_proxy':'http://127.0.0.1:1', 'HTTP_PROXY':'http://127.0.0.1:1',
+                                         'no_proxy':'', 'NO_PROXY':''}):
+                with launcher.local_urlopen(base, timeout=2) as response:
+                    self.assertEqual(response.read(), b'local')
+                with self.assertRaisesRegex(OSError, 'redirects are disabled'):
+                    launcher.local_urlopen(base+'/redirect', timeout=2)
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=3)
 
 
 if __name__ == '__main__':

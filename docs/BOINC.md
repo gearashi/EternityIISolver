@@ -1,16 +1,22 @@
-# Experimental BOINC integration
+# BOINC research notes — integration on hold
 
-For inspection of existing Eternity@Home CPU workunits, see [CPU DFS compatibility](BOINC_CPU.md). That inspector preserves ticket identities but does not run or certify the production DFS. The worker below uses a separate stochastic-search contract.
+The GPU DFS port is **on hold**, and no CPU replacement worker is being developed. The application remains an offline GPU board-repair experiment. Local swaps and rotations do not count as BOINC DFS nodes, completed workunits, or credit.
 
-This repository provides a headless, bounded GPU worker and BOINC wrapper examples for the Eternity@Home team to evaluate. It does **not** install an application on the project server, submit results, or replace an existing BOINC application. A real BOINC client/server deployment has not yet been certified by this repository's tests.
+A project message supplied by the user reports that a GPU DFS implementation was about **7,000× slower in the project's tests** than its CPU implementation, and that tested board-repair approaches plateaued. We have not independently reproduced those measurements. They concern the tested implementations, not all possible GPU algorithms. The message requires project-controlled production-build validation and says anonymous-platform replacement is disabled.
 
-The scheduled adapter currently supports an explicitly allocated **NVIDIA CUDA device on Windows or Linux**. The desktop solver also supports OpenCL, including compatible AMD, Intel, and Mac GPUs, but the BOINC adapter refuses scheduled OpenCL work until an allocation bridge is implemented. `--standalone-diagnostic` permits local OpenCL experiments; it must not be used to bypass scheduled device allocation.
+Do not install these examples through `app_info.xml`, replace a project executable, or submit repair results as completed production tickets. This repository does not provide an approved BOINC application. Its tests do not certify production compatibility, search coverage, or a BOINC performance improvement.
+
+For read-only inspection of existing assignments, see [CPU workunit inspection](BOINC_CPU.md). The retained headless worker and XML templates below use a separate bounded-repair contract and are research material for local controlled tests. They do not install an application on a project server or submit results. Their CUDA mode selects an explicit NVIDIA device on Windows/Linux. OpenCL remains available in the standalone repair app; `--standalone-diagnostic` is for local tests only.
+
+The v0.1.1 application uses bundled and previously saved board data, with no automatic index/board downloads, telemetry, or result uploads. A cached snapshot can be old or incomplete. Legacy v0.1.0 had automatic library synchronization; upgrading is necessary to obtain offline behavior. Saved checkpoints and results should be retained.
+
+**Export best board** in the dashboard, or `EternityIISolver export-best --state-dir PATH`, creates a locally validated candidate JSON, readable layout, and validation report under `PATH/exports/`. It works with the search stopped and never uploads files. These exports are for manual review and use library-style candidate fields. The project's accepted upload schema has not been confirmed; an export is not a production CPU workunit result, completed ticket, or evidence of equivalent DFS coverage.
 
 ## Relationship to the existing project
 
 On 8 October 2026, the project's public [application list](https://boinc.eternityathome.org/eternity/apps.php) listed Windows and Linux CPU pilot applications, including version 2.37 and a Windows 2.38 canary. Its [research description](https://stats.eternityathome.org/solver-research) describes strict five-clue DFS work divided into roots and tickets. This GPU worker performs stochastic board repair; its steps and proposed moves are different from that solver's DFS nodes. It does not accept the existing CPU ticket format. The public pages inspected did not provide a complete production workunit/validator contract to implement as a drop-in replacement.
 
-Deploy this as a separate experimental application/version and workunit schema. Compare improvements per device-hour and resource usage before deciding whether it merits production work. A completed task does not establish exhaustive search, and this implementation has not demonstrated a 480/480 solution.
+Any future project integration would need a project-controlled build, compatible search semantics, and independent production validation before deployment. That work is currently on hold. Finishing the prototype's move budget does not establish exhaustive search, and this implementation has not demonstrated a 480/480 solution.
 
 ### What is publicly observable about production batches
 
@@ -98,9 +104,9 @@ The per-workunit catalog hash was `25c37addeaaa8c0f2407a1a6bbf69662fb4815c90f336
 
 The candidate checker is an integration example, not a registered BOINC validator daemon. It needs the source checkout's `validator.py`, `app_paths.py`, and trusted `data/` directory; copying that script alone from a native archive is insufficient.
 
-## Local preflight
+## Optional local prototype preflight
 
-From an installed CUDA-enabled source checkout, in a fresh writable test directory:
+These commands exercise only the separate repair prototype. From an installed CUDA-enabled source checkout, use a writable test directory outside any BOINC slot:
 
 ```text
 eternity-solver boinc --input /path/to/boinc/workunit.sample.json --output result.json --checkpoint checkpoint.npz --progress fraction_done.txt --backend cuda --cuda-device 0
@@ -177,13 +183,9 @@ The wrapper expands `$GPU_DEVICE_NUM` from BOINC's assigned device. The worker s
 
 OpenCL needs a separate, exact allocation path. BOINC's native `boinc_get_opencl_ids()` maps its GPU type and `gpu_opencl_dev_index` to a platform/device; an index into this application's flattened device list is not equivalent. A future adapter must use that API, or a carefully tested bridge reproducing the [official mapping](https://github.com/BOINC/boinc/blob/master/api/boinc_opencl.cpp), and pass the exact device into the engine. Until then, AMD/Intel/Apple OpenCL support is available in the standalone application only.
 
-For the project's experimental CUDA app version:
+The retained XML examples assume an official BOINC wrapper, which this repository does not redistribute. Their logical names are `eternity_gpu_worker` and `job.xml`. Native packages are **onedir** distributions: a hypothetical project build would need the executable and its entire `_internal` runtime directory, with relative data/library paths preserved. The standalone ZIP is not an app-version manifest.
 
-1. Obtain/build an official BOINC wrapper for each supported platform. This repository does not redistribute the wrapper.
-2. Package the entire CUDA-enabled native solver distribution as application-version files. It is an **onedir** distribution: include the executable and its entire `_internal` runtime directory on Windows/Linux, not just the executable. Expose the correctly installed executable with the logical name `eternity_gpu_worker`, and this job file with logical name `job.xml`. Preserve relative bundled library/data paths; the standalone ZIP is not itself a BOINC app-version manifest. If an app-version archive is used, configure its extraction and file resolution accordingly.
-3. Use a CUDA/NVIDIA GPU plan class requesting one assigned GPU per task. Reserve measured feeder CPU capacity, memory, and disk space. BOINC's [plan-class documentation](https://github.com/BOINC/boinc/wiki/Specifying-plan-classes-in-XML) defines GPU/driver/resource constraints; do not replace a project's existing `plan_class_spec.xml` with an example fragment.
-4. Register input/output templates and have the generator emit this workunit schema. Set measured resource estimates/bounds and deadlines on the server. The supplied XML follows BOINC's [job-template format](https://github.com/BOINC/boinc/wiki/Job-templates); `copy_file` supplies real slot filenames for this worker.
-5. Wire a candidate validator and assimilator into the project's existing database/board library. Stage this on a test project before exposing it to volunteers.
+These are packaging assumptions, not instructions to deploy on the existing project. Any project-controlled experiment would also need measured resource limits, a supported GPU [plan class](https://github.com/BOINC/boinc/wiki/Specifying-plan-classes-in-XML), and project-owned validation/assimilation. The supplied XML follows BOINC's [job-template format](https://github.com/BOINC/boinc/wiki/Job-templates). No anonymous-platform override is supplied or supported here.
 
 `job.xml` enables process-tree supervision for executable bootloaders and uses normal feeder priority. It deliberately omits the wrapper's hard `time_limit`: the worker owns its bounded step budget, while forced termination may occur before a final checkpoint. The wrapper and application must still obey ordinary BOINC suspension/abort policy.
 
@@ -195,7 +197,7 @@ Candidate legality does not prove that a volunteer performed the claimed amount 
 
 Keep the library monitor disabled inside BOINC slots: this adapter imports no library client and performs no networking. Deduplicate scheduled work by workunit identity on the server, and deduplicate accepted boards with the project's established canonical board hash. A workunit ledger avoids resending completed workunits; neither that ledger nor the board library proves that the heuristic has never visited a board. Do not equate this repository's input hash with the public board-library hash.
 
-## Predeployment evidence the team still needs
+## Unresolved production validation requirements
 
 - Real BOINC client: suspend/resume, leave-memory policy, quit/restart, abort, heartbeat loss, and checkpoint recovery on each supported platform.
 - Actual GPU: allocation isolation on multi-GPU hosts, short kernels under desktop use, score agreement with CPU validation, resource peaks, and measured workunit duration.

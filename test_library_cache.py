@@ -1,6 +1,9 @@
 """Offline behavior tests against the independently validated downloaded fixtures."""
-import gzip,json,shutil,time,unittest,uuid,tempfile
+import gzip,json,unittest,tempfile
+import inspect
 from pathlib import Path
+from unittest.mock import patch
+import library_cache
 from library_cache import LibraryMonitor, local_board_hash
 
 ROOT=Path(__file__).resolve().parent/'data' if (Path(__file__).resolve().parent/'data').exists() else Path(__file__).resolve().parents[1]
@@ -17,7 +20,7 @@ class LibraryTests(unittest.TestCase):
         self.path=Path(self.temporary.name)
         self.mon=LibraryMonitor(self.path,pieces_path=ROOT/'pieces.txt' if (ROOT/'pieces.txt').exists() else ROOT/'256pieces.txt')
     def tearDown(self):
-        self.mon.stop();self.mon._db.close()
+        self.mon.stop();self.mon.close()
         self.temporary.cleanup()
     def test_unknown_then_exact_known_and_persist(self):
         self.assertIsNone(self.mon.is_known(DOC466['board']))
@@ -28,12 +31,13 @@ class LibraryTests(unittest.TestCase):
         self.assertIsNone(self.mon.is_known(DOC465['board']))
         again=LibraryMonitor(self.path)
         try:self.assertTrue(again.is_known(DOC466['board']))
-        finally:again._db.close()
-    def test_lazy_geometry_and_complete_tiers(self):
+        finally:again.close()
+    def test_local_geometry_registration_and_complete_tiers(self):
         self.mon.ingest_index(INDEX)
-        fixtures={SHA466:DOC466,SEED.stem:DOC465}
-        self.mon._request=lambda url,headers=None:(200,{'Content-Encoding':'gzip'},gzip.compress(json.dumps(fixtures[url.rsplit('/',1)[-1]]).encode()))
-        self.assertTrue(self.mon.warm_once());self.assertTrue(self.mon.warm_once())
+        self.assertFalse(self.mon.warm_once())
+        self.assertEqual(self.mon.status()['pending_geometries'],2)
+        self.mon.register_known_document(DOC466,SHA466)
+        self.mon.register_known_document(DOC465,SEED.stem)
         self.assertFalse(self.mon.warm_once())
         self.assertTrue(self.mon.status()['geometry_cache_complete'])
         self.assertTrue(self.mon.is_known(DOC465['board']))
@@ -45,32 +49,105 @@ class LibraryTests(unittest.TestCase):
         old_score=self.mon._score;self.mon._score=lambda board:467
         try:self.assertFalse(self.mon.is_known(changed))
         finally:self.mon._score=old_score
-    def test_etag_and_bad_update_preserve_snapshot(self):
+    def test_poll_and_warm_preserve_snapshot_and_historical_timestamp(self):
         self.mon.ingest_index(INDEX,{'ETag':'"fixture"'})
-        calls=[]
-        def fetch(url,headers=None):calls.append(headers);return 304,{},b''
-        self.mon._request=fetch;self.mon.poll_once()
-        self.assertEqual(calls[0]['If-None-Match'],'"fixture"')
-        self.mon._request=lambda *a:(200,{},b'{"count":0}')
-        self.mon.poll_once();self.assertEqual(self.mon.status()['indexed_boards'],2)
-        self.assertIn('Unsupported',self.mon.status()['last_error'])
+        with self.mon._db:self.mon._put_meta('index_checked_at',123.0)
+        before=self.mon.status();changes=self.mon._db.total_changes
+        index_bytes=(self.path/'index.json.gz').read_bytes()
+        for _ in range(3):
+            self.mon.start();self.mon.poll_once();self.assertFalse(self.mon.warm_once())
+        after=self.mon.status()
+        self.assertEqual(after,before)
+        self.assertEqual(self.mon._db.total_changes,changes)
+        self.assertEqual((self.path/'index.json.gz').read_bytes(),index_bytes)
+        self.assertEqual(after['last_index_check_unix'],123.0)
+        self.assertTrue(after['snapshot_stale'])
+        self.assertFalse(after['online_freshness_verified'])
+        with self.assertRaisesRegex(ValueError,'Unsupported'):
+            self.mon.ingest_index({'count':0})
+        self.assertEqual(self.mon.status(),before)
+
+    def test_local_index_import_is_not_an_online_check(self):
+        self.assertIsNone(self.mon.status()['last_index_check_unix'])
+        with patch('library_cache.time.time',return_value=987.0):self.mon.ingest_index(INDEX)
+        status=self.mon.status()
+        self.assertEqual(status['last_local_index_load_unix'],987.0)
+        self.assertIsNone(status['last_index_check_unix'])
+        self.assertTrue(status['full_metadata_loaded'])
+        self.assertTrue(status['snapshot_stale'])
+        self.assertEqual(json.loads(gzip.decompress((self.path/'index.json.gz').read_bytes())),INDEX)
     def test_invalid_board_rejected(self):
         broken=DOC466['board'][:];broken[17]=broken[18]
         with self.assertRaises(ValueError):self.mon.is_known(broken)
         bad=dict(DOC466);bad['score']=480
         with self.assertRaises(ValueError):self.mon.register_known_document(bad,SHA466)
         self.assertEqual(self.mon.status()['known_exact_boards'],0)
-    def test_bootstrap_and_background_stop(self):
+    def test_bootstrap_and_compatibility_methods_never_connect_or_start_threads(self):
         bootstrap=self.path/'library-index.json';bootstrap.write_text(json.dumps(INDEX))
-        again=LibraryMonitor(self.path)
-        fixtures={SHA466:DOC466,SEED.stem:DOC465}
-        def fetch(url,headers=None):
-            return (304,{},b'') if url.endswith('/index') else (200,{},json.dumps(fixtures[url.rsplit('/',1)[-1]]).encode())
-        again._request=fetch
+        with patch('socket.socket.connect',side_effect=AssertionError('Network connect forbidden')) as connect, \
+             patch('socket.create_connection',side_effect=AssertionError('Network connection forbidden')) as create, \
+             patch('urllib.request.urlopen',side_effect=AssertionError('URL request forbidden')) as urlopen, \
+             patch('threading.Thread.start',side_effect=AssertionError('Background thread forbidden')) as start:
+            # Old online timing/settings arguments must not restore networking.
+            again=LibraryMonitor(self.path,interval_seconds=.01,request_timeout=.01,detail_interval_seconds=.01)
+            try:
+                self.assertEqual(again.status()['indexed_boards'],2)
+                for _ in range(3):
+                    self.assertIsNone(again.start())
+                    status=again.poll_once()
+                    self.assertFalse(again.warm_once())
+                    self.assertTrue(again.stop(timeout=0))
+                    self.assertFalse(status['running'])
+                    self.assertFalse(status['network_enabled'])
+                    self.assertEqual(status['mode'],'offline')
+                    self.assertEqual(status['network_requests_this_session'],0)
+                    self.assertEqual(status['detail_downloads_this_session'],0)
+                    self.assertFalse(status['automatic_polling_enabled'])
+                for mocked in (connect,create,urlopen,start):mocked.assert_not_called()
+            finally:again.close()
+
+    def test_existing_legacy_sqlite_cache_survives_without_refresh(self):
+        self.mon.ingest_index(INDEX);self.mon.register_known_document(DOC466,SHA466)
+        with self.mon._db:
+            self.mon._db.execute("DELETE FROM metadata WHERE key='index_loaded_at'")
+            self.mon._put_meta('index_checked_at',123.0)
+        old_rows=self.mon._db.execute('SELECT * FROM boards ORDER BY public_sha').fetchall()
+        again=LibraryMonitor(self.path,interval_seconds=1,request_timeout=60,detail_interval_seconds=1)
         try:
-            self.assertEqual(again.status()['indexed_boards'],2)
-            again.start();time.sleep(.15);self.assertTrue(again.stop())
-            self.assertFalse(again.status()['running'])
-        finally:again._db.close()
+            again.start();again.poll_once();again.warm_once()
+            self.assertTrue(again.is_known(DOC466['board']))
+            self.assertIsNone(again.is_known(DOC465['board']))
+            self.assertEqual(again._db.execute('SELECT * FROM boards ORDER BY public_sha').fetchall(),old_rows)
+            self.assertEqual(again.status()['last_index_check_unix'],123.0)
+            self.assertIsNone(again.status()['last_local_index_load_unix'])
+        finally:again.close()
+
+    def test_close_is_idempotent_and_reopened_cache_preserves_boards(self):
+        self.mon.ingest_index(INDEX)
+        self.mon.register_known_document(DOC466,SHA466)
+        before=self.mon.status()
+        self.assertTrue(self.mon.stop())
+        self.assertEqual(self.mon.status(),before)
+        self.mon.close();self.mon.close()
+        self.assertTrue(self.mon.stop())
+        # Renaming the closed database also exercises Windows handle release.
+        database=self.path/'library.sqlite3'
+        renamed=self.path/'closed-library.sqlite3'
+        database.rename(renamed);renamed.rename(database)
+        again=LibraryMonitor(self.path)
+        try:
+            self.assertTrue(again.is_known(DOC466['board']))
+            self.assertEqual(again.status(),before)
+        finally:again.close();again.close()
+
+    def test_runtime_has_no_download_implementation_or_endpoint(self):
+        self.assertFalse(hasattr(LibraryMonitor,'_request'))
+        self.assertFalse(hasattr(LibraryMonitor,'_decode'))
+        self.assertFalse(hasattr(LibraryMonitor,'_loop'))
+        self.assertFalse(hasattr(library_cache,'API'))
+        source=inspect.getsource(library_cache)
+        self.assertNotIn('urllib',source)
+        self.assertNotIn('https://',source)
+        self.assertNotIn('http://',source)
 
 if __name__=='__main__':unittest.main(verbosity=2)

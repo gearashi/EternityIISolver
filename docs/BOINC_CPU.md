@@ -1,6 +1,8 @@
-# Existing CPU workunits: inspection and DFS compatibility
+# Existing CPU workunits: read-only inspection
 
-The development command `inspect-cpu` reads the observed Eternity@Home CPU workunit format and preserves its ticket identities. It does not run a search, complete a ticket, write a checkpoint, or produce a BOINC result. The released v0.1.0 executable predates this command; run it from the development source checkout until a later release includes it.
+The GPU DFS port is **on hold**. No CPU replacement worker is being developed. The `inspect-cpu` command remains a read-only research tool: it reads the observed Eternity@Home CPU input format and preserves ticket identities without running a search, completing a ticket, writing a checkpoint, or producing a BOINC result. Legacy v0.1.0 predates this command; use the current source checkout or a later release that includes it.
+
+A project message supplied by the user reports a roughly 7,000× slowdown for the project's tested GPU DFS implementation and requires project-controlled production-build validation. That measurement has not been independently reproduced here and is not a universal claim about GPUs. The message also says anonymous-platform replacement is disabled. This inspector does not enable it or authorize replacing project executables. The active application remains offline GPU board repair; its move counts are unrelated to BOINC node counts or credit.
 
 ## Inspect an existing assignment
 
@@ -75,16 +77,16 @@ Optional journal identities retain the original opaque `cfg_hash`, epoch, and ru
 
 ## Integration boundary
 
-Python callers can use `inspect_workunit(slot_dir, project_root=...)`, iterate `.iter_tickets()`, or call `.summary(ticket_limit=...)`. The returned workunit and ticket structures are immutable. Job options are retained as data, never executed. Input parsing and ticket reconstruction are suitable foundations for a future compatible worker, but the current GPU search remains the separate stochastic worker described in [BOINC.md](BOINC.md).
+Python callers can use `inspect_workunit(slot_dir, project_root=...)`, iterate `.iter_tickets()`, or call `.summary(ticket_limit=...)`. The returned workunit and ticket structures are immutable. Job options are retained as data, never executed. These inspection results are preserved as research evidence while the DFS port is on hold. The standalone GPU repair prototype is described in [BOINC.md](BOINC.md).
 
-Before claiming a drop-in GPU DFS worker, establish:
+The following compatibility questions remain unresolved:
 
 - Exact candidate-table initialization, sorting, tie ordering, and persistent state between tickets.
 - Production pruning, sigma-tail/main settings, endgame ladder, and search-order behavior.
 - Node counting and cap boundaries, interruption, per-ticket CPU budgets, and checkpoint/resume semantics.
 - Output archive contents, ticket completion statuses, server validation, and assimilation rules.
 
-Production source would make this substantially easier. Without it, the alternative is further reconstruction plus reproducible reference traces for the same inputs, seeds, node budgets, and resumed states. A legal board or a matching ticket number alone cannot demonstrate equivalent search coverage. This inspector produces no coverage or completion claim, and an unsuccessful bounded search cannot establish that Eternity II is impossible.
+A legal board or a matching ticket number alone cannot demonstrate equivalent search coverage. Any future integration would require project-controlled production validation; no deployment or replacement is planned here. This inspector produces no coverage or completion claim, and an unsuccessful bounded search cannot establish that Eternity II is impossible.
 
 ## Offline checks
 

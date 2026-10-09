@@ -7,12 +7,28 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.parse
 import webbrowser
 
 from app_paths import resource_root, state_root
 from process_control import read_status
 
-VERSION = '0.1.0'
+VERSION = '0.1.1'
+
+
+class _NoLocalRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        raise OSError('Local dashboard redirects are disabled')
+
+
+def local_urlopen(request, *, timeout):
+    url = request.full_url if isinstance(request, urllib.request.Request) else request
+    parsed = urllib.parse.urlsplit(url)
+    if (parsed.scheme != 'http' or parsed.hostname != '127.0.0.1'
+            or parsed.username is not None or parsed.password is not None):
+        raise ValueError('Control requests must target the local dashboard')
+    # Local controls bypass system proxies and cannot redirect to remote services.
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoLocalRedirect()).open(request, timeout=timeout)
 
 
 def parser():
@@ -27,7 +43,7 @@ def parser():
             command.add_argument('--replicas', type=int, default=4096)
             command.add_argument('--seed', type=int, default=20261007)
             command.add_argument('--seconds', type=float, help='Bounded run; otherwise continues until stopped')
-            command.add_argument('--no-library', action='store_true')
+            command.add_argument('--no-library', action='store_true', help='Skip local cached-board checks; external networking is always disabled')
             command.add_argument('--port', type=int, default=8765)
         if name in ('open', 'serve'):
             command.add_argument('--port', type=int, default=8765)
@@ -43,6 +59,7 @@ def parser():
     commands.add_parser('diagnose', help='Run bounded GPU correctness diagnostics; diagnose --help lists options')
     commands.add_parser('boinc', help='Run an experimental bounded BOINC workunit; boinc --help lists options')
     commands.add_parser('inspect-cpu', help='Read CPU workunit inputs and ticket IDs without running a search')
+    commands.add_parser('export-best', help='Save validated candidate files locally for manual review; never uploads')
     return result
 
 
@@ -78,7 +95,7 @@ def ensure_dashboard(home, port=8765):
             control = json.loads(control_path.read_text(encoding='utf-8'))
             if process_alive(control.get('pid')):
                 url = dashboard_url(control)
-                with urllib.request.urlopen(url + 'status', timeout=2) as response:
+                with local_urlopen(url + 'status', timeout=2) as response:
                     status = json.load(response)
                 if status.get('dashboard_pid') == control['pid']:
                     return url
@@ -105,7 +122,7 @@ def ensure_dashboard(home, port=8765):
         if process.poll() is not None:
             raise RuntimeError(f'Dashboard exited during startup. Check {runtime / "dashboard.stderr.log"}. Another app may own port {port}.')
         try:
-            with urllib.request.urlopen(url + 'status', timeout=1) as response:
+            with local_urlopen(url + 'status', timeout=1) as response:
                 live = json.load(response)
             # Never mistake another process on the port for our new search.
             if live.get('dashboard_pid') and control_path.is_file():
@@ -125,7 +142,7 @@ def start(args):
                           'seed': args.seed, 'seconds': args.seconds, 'no_library': args.no_library}).encode()
     request = urllib.request.Request(url + 'start', data=payload,
                                      headers={'Content-Type': 'application/json'}, method='POST')
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with local_urlopen(request, timeout=10) as response:
         result = json.load(response)
     if not args.no_browser:
         webbrowser.open(url)
@@ -159,6 +176,9 @@ def main(argv=None):
     if argv and argv[0] == 'inspect-cpu':
         from boinc_cpu_workunit import main as inspect_cpu
         return inspect_cpu(argv[1:])
+    if argv and argv[0] == 'export-best':
+        from manual_export import main as export_best
+        return export_best(argv[1:])
     args = parser().parse_args(argv or ['open'])
     try:
         if args.command == 'validate':

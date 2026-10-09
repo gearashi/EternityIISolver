@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eternity-ii-solver"
-version = "0.1.0"
+version = "0.1.1"
 description = "Validated GPU local search for the five-clue Eternity II puzzle"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,6 +30,6 @@ Repository = "https://github.com/gearashi/EternityIISolver"
 Issues = "https://github.com/gearashi/EternityIISolver/issues"
 
 [tool.setuptools]
-py-modules = ["launcher", "app_paths", "process_control", "dashboard_server", "solver", "gpu_engine", "gpu_backends", "kernel_port", "validator", "library_cache", "test_gpu", "boinc_worker", "boinc_cpu_workunit"]
+py-modules = ["launcher", "app_paths", "process_control", "dashboard_server", "solver", "gpu_engine", "gpu_backends", "kernel_port", "validator", "library_cache", "test_gpu", "boinc_worker", "boinc_cpu_workunit", "manual_export"]
 packages = ["eternity_resources"]
 include-package-data = true

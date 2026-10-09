@@ -2,6 +2,8 @@
 import argparse
 import json
 import math
+import re
+import urllib.parse
 import os
 from pathlib import Path
 import subprocess
@@ -55,6 +57,27 @@ def atomic_json(path, value):
     pending = path.with_suffix('.tmp')
     pending.write_text(json.dumps(value, indent=2), encoding='utf-8')
     os.replace(pending, path)
+
+
+def export_best_response(home):
+    from manual_export import export_best
+    home = Path(home)
+    output = export_best(home)
+    for key in ('json', 'layout', 'validation'):
+        relative = Path(output[key + '_path']).relative_to(home / 'exports').as_posix()
+        output[key + '_url'] = '/exports/' + urllib.parse.quote(relative, safe='/')
+    return output
+
+
+def resolve_exported_file(home, request_path):
+    relative = urllib.parse.unquote(request_path[len('/exports/'):])
+    if not re.fullmatch(r'[A-Za-z0-9_-]+/(?:board\.json|layout\.txt|validation\.json)', relative):
+        raise ValueError('Invalid export filename')
+    folder = (Path(home) / 'exports').resolve()
+    path = (folder / relative).resolve(strict=True)
+    if not path.is_relative_to(folder) or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
+        raise ValueError('Export file is not available')
+    return path
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -128,6 +151,23 @@ class DashboardServer(ThreadingHTTPServer):
             saved.setdefault('source_best_score', 466)
             saved.update(dashboard_available=True, dashboard_pid=os.getpid(), port=self.port,
                          can_start=not active, can_stop=bool(active), state_dir=str(self.home))
+            legacy_active = active and self.worker is None and saved.get('external_network_enabled') is not False
+            saved.update(search_method='gpu-board-repair',
+                         counter_semantics='local move attempts; not DFS nodes or BOINC credit')
+            library = dict(saved.get('library') or {})
+            if legacy_active:
+                saved['external_network_enabled'] = None
+                saved['legacy_worker_warning'] = 'An older worker is still running. Its network behavior is unverified; stop it before using the offline update.'
+                library.update(mode='legacy-unverified', network_enabled=None, online_freshness_verified=False)
+            else:
+                saved['external_network_enabled'] = False
+                saved.pop('legacy_worker_warning', None)
+                if library.get('network_requests_this_session'):
+                    library['previous_run_network_requests'] = library['network_requests_this_session']
+                library.update(mode='offline', network_enabled=False, running=False,
+                               online_freshness_verified=False, network_requests_this_session=0,
+                               detail_downloads_this_session=0)
+            saved['library'] = library
             return saved
 
     def status_revision(self):
@@ -170,6 +210,13 @@ class DashboardServer(ThreadingHTTPServer):
                 status['state'] = 'stopping'
             return status
 
+    def export_best(self):
+        with self.mutex:
+            return export_best_response(self.home)
+
+    def exported_file(self, request_path):
+        return resolve_exported_file(self.home, request_path)
+
     def board(self):
         board = self.bundle.record_board
         try:
@@ -201,13 +248,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
-    def send_payload(self, value, status=200, content_type='application/json; charset=utf-8'):
+    def send_payload(self, value, status=200, content_type='application/json; charset=utf-8', *, filename=None):
         payload = value if isinstance(value, bytes) else json.dumps(value).encode('utf-8')
         self.send_response(status)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(payload)))
+        if filename is not None:
+            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Content-Security-Policy', "default-src 'self'; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'")
         self.end_headers()
         self.wfile.write(payload)
 
@@ -232,17 +282,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_payload(self.server.status())
             elif self.path == '/board':
                 self.send_payload(self.server.board())
+            elif self.path.startswith('/exports/'):
+                path = self.server.exported_file(self.path)
+                mime = 'application/json; charset=utf-8' if path.suffix == '.json' else 'text/plain; charset=utf-8'
+                self.send_payload(path.read_bytes(), content_type=mime, filename=path.name)
             elif self.path == '/health':
                 self.send_payload({'dashboard_pid': os.getpid(), 'port': self.server.port, 'state': 'running'})
             else:
                 self.send_payload({'error': 'Unknown endpoint'}, 404)
-        except OSError as exc:
-            self.send_payload({'error': str(exc)}, 500)
+        except (OSError, ValueError) as exc:
+            self.send_payload({'error': 'Requested file is unavailable'}, 404)
 
     def do_POST(self):
         if not self.local_request():
             return
-        if self.path not in ('/start', '/stop'):
+        if self.path not in ('/start', '/stop', '/export-best'):
             self.send_payload({'error': 'Unknown endpoint'}, 404)
             return
         if self.headers.get_content_type() != 'application/json':
@@ -265,6 +319,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if self.path == '/start':
                 status, started = self.server.start_worker(value)
                 self.send_payload(status, 202 if started else 200)
+            elif self.path == '/export-best':
+                if value:
+                    raise ValueError('Export expects an empty JSON object')
+                self.send_payload(self.server.export_best(), 201)
             else:
                 if value:
                     raise ValueError('Stop expects an empty JSON object')

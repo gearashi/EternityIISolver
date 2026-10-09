@@ -89,7 +89,13 @@ def main():
             if not report.get("valid") or report.get("score") != 466:
                 raise RuntimeError(f"Frozen resource validation failed: {report}")
             subprocess.run([str(executable), "status", "--json", "--state-dir", temporary], cwd=temporary, check=True, timeout=30)
-            for command in ("diagnose", "boinc", "inspect-cpu"):
+            exported = subprocess.run([str(executable), "export-best", "--state-dir", temporary],
+                                      cwd=temporary, capture_output=True, text=True, check=True, timeout=30)
+            files = json.loads(exported.stdout)
+            validation = json.loads(Path(files["validation_path"]).read_text(encoding="utf-8"))
+            if not files.get("exported") or files.get("score") != 466 or not validation.get("valid"):
+                raise RuntimeError("Frozen manual candidate export failed validation")
+            for command in ("diagnose", "boinc", "inspect-cpu", "export-best"):
                 subprocess.run([str(executable), command, "--help"], cwd=temporary,
                                capture_output=True, text=True, check=True, timeout=30)
     # Top-level readable documentation accompanies the app and its dependency notices.
