@@ -12,7 +12,7 @@
 <div class="settings-row"><label for="methodChoice">Search method<br><select id="methodChoice"><option value="gpu">GPU board repair</option><option value="exact">CPU exact / hybrid</option></select></label><div class="setting-group" id="gpuSettings"><label for="searchCount"><span id="gpuCountLabel">Parallel GPU searches</span><br><input id="searchCount" type="number" min="32" max="32768" step="1" value="4096" style="width:130px"></label><label for="backendChoice">GPU support<br><select id="backendChoice"><option value="auto">Automatic</option><option value="cuda">NVIDIA CUDA</option><option value="opencl">OpenCL (AMD, Intel, Apple, NVIDIA)</option></select></label></div><div class="setting-group" id="exactSettings" hidden><label for="exactEngine">Exact-search engine<br><select id="exactEngine"><option value="dfs">DFS (recommended fallback)</option><option value="sat">SAT (Glucose)</option><option value="cp-sat">CP-SAT (OR-Tools)</option><option value="hybrid">Hybrid GPU hints + DFS (experimental)</option></select></label><label for="workerCount">CPU workers<br><select id="workerCount"><option value="1">1 worker</option><option value="2">2 workers</option><option value="3">3 workers</option><option value="4">4 workers</option></select></label></div></div>
 <p class="fineprint" id="gpuHelp">Each parallel GPU search explores its own swaps and rotations. Start with 4,096; larger counts use more memory without necessarily increasing speed. Changing the count keeps saved searches where possible and backs up the previous population.</p>
 <p class="fineprint" id="exactHelp" hidden>Exact search seeks all 480 matches with all five clues fixed. It keeps your saved best board on screen and does not produce intermediate score improvements. DFS continues its saved search frontier; SAT and CP-SAT restart their native search after stopping. Only CP-SAT supports more than one CPU worker.</p>
-</section><section class="metrics" aria-label="Search statistics">
+</section><p id="historyHint" class="fineprint" style="margin:0 0 12px" hidden></p><section class="metrics" aria-label="Search statistics">
 <div class="card"><div class="label">Best verified</div><div class="value"><strong id="score">—</strong><span> / 480</span></div><div class="sub" id="recordLabel">Waiting for a validated board</div></div>
 <div class="card"><div class="label" id="throughputLabel">Local moves / second</div><div class="value" id="throughput">—</div><div class="sub" id="throughputHint">Swap and rotation proposals</div></div>
 <div class="card"><div class="label" id="parallelLabel">Parallel GPU searches</div><div class="value" id="replicas">—</div><div class="sub" id="parallelHint">Parallel repair searches</div></div>
@@ -42,6 +42,12 @@ function updateSettings(){
  if(!multi)$('workerCount').value='1';
  for(const id of ['methodChoice','searchCount','backendChoice','exactEngine'])$(id).disabled=controlsLocked||startRequest;
  $('workerCount').disabled=controlsLocked||startRequest||!multi;
+ const engine=$('exactEngine').value;
+ $('resumeHint').textContent=exact?(hybrid?'Start reuses the frozen GPU hints and continues the compatible hybrid DFS frontier. The short GPU sampling stage runs only when fresh hints are needed.':engine==='dfs'?'Start continues the saved DFS frontier when compatible.':'SAT and CP-SAT start a fresh native search after Stop; their internal search state is not checkpointed.')+' Your saved best board and manual exports are retained.':'Start restores compatible saved GPU searches. Your saved best board and manual exports are retained.';
+ const past=currentStatus&&!controlsLocked&&typeof currentStatus.last_update==='string';
+ $('historyHint').hidden=!past;
+ $('historyHint').textContent=past?'Statistics below describe the previous '+(currentStatus.method==='exact'?engineName(currentStatus.exact_engine||'dfs'):'GPU board repair')+' run. Start uses your selected settings.':'';
+
 }
 function renderStatus(s,isLive){
  currentStatus=s;const state=isLive?(s.state||'unknown'):'offline',exact=s.method==='exact',engine=s.exact_engine||s.settings?.exact_engine||'dfs',hybrid=exact&&engine==='hybrid';
@@ -63,7 +69,6 @@ function renderStatus(s,isLive){
  $('sampledBoards').textContent=count(s.sampled_boards);$('sampleRate').textContent=compact(s.sampling_boards_per_second);$('hintCount').textContent=count(s.hybrid_hint_count);
  for(const [id,key] of [['duplicates','duplicate_results'],['novel','new_results'],['pending','pending_novelty_checks']])$(id).textContent=count(s[key]);
  $('activityNote').textContent=exact?'Branches, conflicts and placement depth describe this CPU search. Counts are engine-specific and do not represent BOINC workunits or credit. Native solvers may report counts only when a run ends.'+(typeof s.exact_conclusion==='string'?' '+s.exact_conclusion:''):'Moves are local swap and rotation attempts. They do not count as BOINC search nodes, completed tasks, or credit.';
- $('resumeHint').textContent=exact?(hybrid?'Start reuses the frozen GPU hints and continues the compatible hybrid DFS frontier. The short GPU sampling stage runs only when fresh hints are needed.':engine==='dfs'?'Start continues the saved DFS frontier when compatible.':'SAT and CP-SAT start a fresh native search after Stop; their internal search state is not checkpointed.')+' Your saved best board and manual exports are retained.':'Start restores compatible saved GPU searches. Your saved best board and manual exports are retained.';
  const library=s.library||{},total=Number(library.indexed_boards),cached=Number(library.cached_geometries);
  $('indexed').textContent=count(library.indexed_boards);$('cached').textContent=count(library.cached_geometries);$('known').textContent=count(library.known_exact_boards);
  const fraction=Number.isFinite(total)&&total>0&&Number.isFinite(cached)?Math.max(0,Math.min(1,cached/total)):0;

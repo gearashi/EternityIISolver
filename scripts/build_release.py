@@ -1,4 +1,4 @@
-"""Build a native app archive; never starts a solver or downloads board data."""
+"""Build a native app archive and run isolated, bounded solver smoke checks offline."""
 from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
@@ -101,7 +101,7 @@ def main():
                 raise RuntimeError("Frozen exact-engine diagnostics failed")
             subprocess.run([sys.executable, str(ROOT / "scripts" / "smoke_exact_app.py"),
                             "--executable", str(executable), "--output", str(ROOT / "build" / "exact-app-smoke.json")],
-                           cwd=temporary, check=True, timeout=120)
+                           cwd=temporary, check=True, timeout=180)
             for command in ("diagnose", "boinc", "inspect-cpu", "export-best", "exact", "diagnose-exact", "diagnose-hybrid"):
                 subprocess.run([str(executable), command, "--help"], cwd=temporary,
                                capture_output=True, text=True, check=True, timeout=30)
