@@ -1,6 +1,9 @@
 """Local HTTP controls with a fake downloader: no external requests or search."""
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -49,6 +52,25 @@ class LibraryDashboardTests(unittest.TestCase):
         try:
             with self.opener.open(req,timeout=3) as response:return response.status,json.load(response)
         except urllib.error.HTTPError as exc:return exc.code,json.load(exc)
+    def render_status(self, status):
+        node=shutil.which('node')
+        if node is None:self.skipTest('Node.js is needed for this dashboard JavaScript regression')
+        script=r'''
+const fs=require('node:fs'),vm=require('node:vm');
+const html=fs.readFileSync(process.argv[1],'utf8');
+const source=html.match(/<script>([\s\S]*?)<\/script>/)[1];
+const elements=new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(m=>[m[1],{style:{},value:'',checked:false,hidden:false,disabled:false,textContent:'',addEventListener(){},replaceChildren(){},appendChild(){},setAttribute(){}}]));
+for(const [id,value] of [['methodChoice','gpu'],['exactEngine','dfs'],['workerCount','1'],['searchCount','4096'],['backendChoice','auto']])elements.get(id).value=value;
+const context=vm.createContext({document:{getElementById:id=>elements.get(id),querySelectorAll:()=>[]},localStorage:{getItem:()=>null},setInterval(){},fixture:JSON.parse(process.argv[2])});
+vm.runInContext(source.replace('refresh();setInterval(refresh,3000);',''),context);
+vm.runInContext('renderStatus(fixture,true);',context);
+const result={};for(const id of ['footerMode','libraryPolicy','legacyWarning','throughput','proposed','accepted','exactPhase'])result[id]=elements.get(id).textContent;
+console.log(JSON.stringify(result));
+'''
+        result=subprocess.run([node,'-e',script,str(self.server.resources/'Dashboard.html'),json.dumps(status)],
+                              capture_output=True,text=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr)
+        return json.loads(result.stdout)
     def test_toggle_is_independent_and_never_starts_search(self):
         runtime=self.home/'runtime'
         for name in ('STOP','best.json','checkpoint.npz'):(runtime/name).write_bytes(b'unchanged')
@@ -98,6 +120,51 @@ class LibraryDashboardTests(unittest.TestCase):
         self.assertEqual(code,200)
         self.assertTrue(status['can_start']);self.assertFalse(status['external_network_enabled'])
         self.assertIn('Fixture cache unavailable',status['library']['last_error'])
+        self.assertEqual(self.spawned,[])
+    def test_legacy_worker_warning_survives_separate_downloader_status(self):
+        (self.home/'runtime'/'status.json').write_text(json.dumps({
+            'state':'running','pid':os.getpid(),'library':{'network_enabled':True},
+        }))
+        for enabled in (True,False):
+            with self.subTest(enabled=enabled):
+                code,status=self.request({'enabled':enabled})
+                self.assertEqual(code,200)
+                self.assertEqual(status['library']['mode'],'read-only-downloads' if enabled else 'offline')
+                self.assertIn('older worker',status['legacy_worker_warning'])
+                self.assertIsNone(status['uploads_enabled'])
+                self.assertIsNone(status['solver_network_enabled'])
+                rendered=self.render_status(status)
+                self.assertIn('older worker unverified',rendered['footerMode'])
+                self.assertIn('Older worker networking remains unverified',rendered['libraryPolicy'])
+                self.assertNotIn('uploads disabled',rendered['footerMode'])
+        self.assertEqual(self.spawned,[])
+    def test_starting_exact_worker_cannot_inherit_previous_run_counts(self):
+        class StartingWorker:
+            pid=12345
+            def poll(self):return None
+        path=self.home/'runtime'/'status.json'
+        prior={'state':'stopped','pid':os.getpid(),'method':'exact','exact_engine':'cp-sat',
+               'branches':10395682,'conflicts':117793,'max_depth':88,'exact_counters_available':True,
+               'exact_phase':'stopped','exact_outcome':'infeasible','exact_conclusion':'Previous conclusion'}
+        path.write_text(json.dumps(prior))
+        self.server.worker=StartingWorker()
+        self.server.worker_status_before=self.server.status_revision()
+        for engine in ('sat','cp-sat','dfs','hybrid'):
+            with self.subTest(engine=engine):
+                self.server.settings.update(method='exact',exact_engine=engine)
+                status=self.server.status()
+                self.assertEqual(status['state'],'starting')
+                native=engine in ('sat','cp-sat')
+                self.assertEqual(status['exact_counters_available'],not native)
+                self.assertEqual(status['branches'],None if native else 0)
+                self.assertEqual(status['conflicts'],None if native else 0)
+                self.assertEqual(status['exact_phase'],'starting')
+                for key in ('max_depth','exact_outcome','exact_conclusion'):self.assertNotIn(key,status)
+                rendered=self.render_status(status)
+                self.assertEqual(rendered['proposed'],'Not yet reported' if native else '0')
+                self.assertEqual(rendered['accepted'],'Not yet reported' if native else '0')
+                self.assertEqual(rendered['exactPhase'],'Starting')
+        self.assertEqual(json.loads(path.read_text()),prior,'The previous saved worker report is read-only')
         self.assertEqual(self.spawned,[])
 
 if __name__=='__main__':unittest.main()

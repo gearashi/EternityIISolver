@@ -198,6 +198,12 @@ class DashboardServer(ThreadingHTTPServer):
                     if not fresh_status:
                         saved.update(state='starting', pid=self.worker.pid, process_alive=True)
                         saved.update({key: self.settings[key] for key in ('replicas', 'backend', 'seed', 'method', 'exact_engine', 'workers')})
+                        if self.settings['method'] == 'exact':
+                            native = self.settings['exact_engine'] in ('sat', 'cp-sat')
+                            saved.update(branches=None if native else 0, conflicts=None if native else 0,
+                                         exact_counters_available=not native, exact_phase='starting')
+                            for key in ('max_depth', 'exact_outcome', 'exact_conclusion'):
+                                saved.pop(key, None)
                         saved.pop('error', None)
                         saved.pop('traceback', None)
                 else:

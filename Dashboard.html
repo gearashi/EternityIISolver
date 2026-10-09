@@ -74,7 +74,7 @@ function renderStatus(s,isLive){
  const library=s.library||{},total=Number(library.indexed_boards),cached=Number(library.cached_geometries);
  $('indexed').textContent=count(library.indexed_boards);$('cached').textContent=count(library.cached_geometries);$('known').textContent=count(library.known_exact_boards);
  const fraction=Number.isFinite(total)&&total>0&&Number.isFinite(cached)?Math.max(0,Math.min(1,cached/total)):0;
- const legacy=library.mode==='legacy-unverified',legacyWarning=typeof s.legacy_worker_warning==='string'?s.legacy_worker_warning:s.legacy_worker_warning||legacy?'An older worker is still running. Its network behavior has not been verified. Stop it and start the current app to use the current download controls.':'';
+ const legacy=library.mode==='legacy-unverified'||Boolean(s.legacy_worker_warning),legacyWarning=typeof s.legacy_worker_warning==='string'?s.legacy_worker_warning:s.legacy_worker_warning||legacy?'An older worker is still running. Its network behavior has not been verified. Stop it and start the current app to use the current download controls.':'';
  $('legacyWarning').hidden=!legacyWarning;$('legacyWarning').textContent=legacyWarning;
  const downloadsSupported=typeof s.library_downloads_enabled==='boolean'&&s.dashboard_available!==false,downloads=s.library_downloads_enabled===true,fresh=library.online_freshness_verified===true;
  if(!libraryRequest)$('libraryDownloads').checked=downloads;
@@ -137,7 +137,7 @@ $('libraryDownloads').addEventListener('change',async()=>{
   const response=await fetch('/library-downloads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled}),signal:AbortSignal.timeout(10000)}),result=await response.json();
   if(!response.ok)throw new Error(typeof result.error==='string'?result.error:'The setting could not be saved');
   if(currentStatus)currentStatus={...currentStatus,library_downloads_enabled:enabled};
-  libraryMessage(enabled?'Library downloads enabled. Search controls are unchanged; uploads remain disabled.':'Library downloads disabled. A request already in progress may finish.');
+  libraryMessage(enabled?(result.legacy_worker_warning?'Read-only library downloads enabled. Older worker networking remains unverified.':'Library downloads enabled. Search controls are unchanged; uploads remain disabled.'):'Library downloads disabled. A request already in progress may finish.');
  }catch(error){failure='Download setting could not be confirmed: '+error.message;}
  finally{libraryRequest=false;await refresh();if(currentStatus)$('libraryDownloads').checked=currentStatus.library_downloads_enabled===true;$('libraryDownloads').disabled=!connected||typeof currentStatus?.library_downloads_enabled!=='boolean'||currentStatus?.dashboard_available===false;if(failure)libraryMessage(failure,true);}
 });
