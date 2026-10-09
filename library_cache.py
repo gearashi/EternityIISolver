@@ -96,9 +96,10 @@ class LibraryMonitor:
         if not isinstance(doc,dict) or doc.get('schema')!='eternity2-board-library-index/v2':
             raise ValueError('Unsupported library index schema')
         rows=doc.get('boards')
-        if not isinstance(rows,list) or doc.get('count')!=len(rows):raise ValueError('Index count mismatch')
+        if not isinstance(rows,list) or type(doc.get('count')) is not int or doc['count']!=len(rows):raise ValueError('Index count mismatch')
         seen=set();parsed=[]
         for row in rows:
+            if not isinstance(row,dict):raise ValueError('Invalid index row')
             sha=row.get('sha');score=row.get('score');content=row.get('has_content')
             if not isinstance(sha,str) or not SHA_RE.fullmatch(sha) or sha in seen:raise ValueError('Invalid/duplicate public SHA')
             if type(score)!=int or not 0<=score<=480 or type(content)!=bool:raise ValueError('Invalid index score/content')
@@ -110,14 +111,22 @@ class LibraryMonitor:
         parsed=self._validate_index(doc);headers={k.lower():v for k,v in (headers or {}).items()}
         payload=gzip.compress(json.dumps(doc,separators=(',',':')).encode(),compresslevel=1)
         temporary=self.data_dir/('index.'+uuid.uuid4().hex+'.tmp')
-        temporary.write_bytes(payload);os.replace(temporary,self.data_dir/'index.json.gz')
-        with self._lock,self._db:
-            self._db.execute('UPDATE boards SET active=0')
-            self._db.executemany('''INSERT INTO boards(public_sha,score,has_content,active) VALUES(?,?,?,1)
-                ON CONFLICT(public_sha) DO UPDATE SET score=excluded.score,has_content=excluded.has_content,active=1''',parsed)
-            self._put_meta('index_loaded_at',time.time());self._put_meta('index_generated_at',doc.get('generated_at',''))
-            self._put_meta('etag',headers.get('etag',''));self._put_meta('last_modified',headers.get('last-modified',''))
-            self._last_error=None
+        temporary.write_bytes(payload)
+        try:
+            with self._lock,self._db:
+                self._db.execute('BEGIN IMMEDIATE')
+                cached=dict(self._db.execute('SELECT public_sha,score FROM boards WHERE local_sha IS NOT NULL'))
+                if any(sha in cached and cached[sha]!=score for sha,score,_ in parsed):
+                    raise ValueError('Index changes the score of a validated cached board')
+                self._db.execute('UPDATE boards SET active=0')
+                self._db.executemany('''INSERT INTO boards(public_sha,score,has_content,active) VALUES(?,?,?,1)
+                    ON CONFLICT(public_sha) DO UPDATE SET score=excluded.score,has_content=excluded.has_content,active=1''',parsed)
+                self._put_meta('index_loaded_at',time.time());self._put_meta('index_generated_at',doc.get('generated_at',''))
+                self._put_meta('etag',headers.get('etag',''));self._put_meta('last_modified',headers.get('last-modified',''))
+                os.replace(temporary,self.data_dir/'index.json.gz')
+                self._last_error=None
+        finally:
+            temporary.unlink(missing_ok=True)
         return len(parsed)
 
     def poll_once(self):
@@ -134,9 +143,12 @@ class LibraryMonitor:
 
     def register_known_document(self,doc,public_sha):
         """Seed/reuse an already downloaded public board, checking geometry and score."""
-        if not SHA_RE.fullmatch(public_sha):raise ValueError('Invalid public SHA')
+        if not isinstance(public_sha,str) or not SHA_RE.fullmatch(public_sha):raise ValueError('Invalid public SHA')
+        if not isinstance(doc,dict) or type(doc.get('score')) is not int or not 0<=doc['score']<=480:raise ValueError('Invalid board document score')
         board=doc['board'];blob=board_bytes(board);letters=doc['board_edges']
-        if len(letters)!=1024 or any(c<'a' or c>'w' for c in letters):raise ValueError('Invalid edge encoding')
+        if not isinstance(letters,str) or len(letters)!=1024 or any(c<'a' or c>'w' for c in letters):raise ValueError('Invalid edge encoding')
+        pieces=doc.get('board_pieces')
+        if not isinstance(pieces,str) or not re.fullmatch(r'[0-9]{768}',pieces):raise ValueError('Invalid piece encoding')
         with self._lock:
             if self._faces is None:
                 base=[None]*256
@@ -156,8 +168,10 @@ class LibraryMonitor:
             if len(mapping)!=23 or len(set(mapping.values()))!=23 or mapping[0]!='a':raise ValueError('Palette mismatch')
             digest=hashlib.sha256(blob).hexdigest()
             with self._db:
-                existing=self._db.execute('SELECT score FROM boards WHERE public_sha=?',(public_sha,)).fetchone()
+                self._db.execute('BEGIN IMMEDIATE')
+                existing=self._db.execute('SELECT score,local_sha FROM boards WHERE public_sha=?',(public_sha,)).fetchone()
                 if existing and existing[0]!=score:raise ValueError('Index/document score mismatch')
+                if existing and existing[1] is not None and existing[1]!=digest:raise ValueError('Public board identity changed')
                 self._db.execute('''INSERT INTO boards(public_sha,score,has_content,active,local_sha,placement) VALUES(?,?,1,0,?,?)
                     ON CONFLICT(public_sha) DO UPDATE SET local_sha=excluded.local_sha,placement=excluded.placement,retry_after=0,failures=0''',
                     (public_sha,score,digest,blob))
@@ -173,11 +187,21 @@ class LibraryMonitor:
         digest=local_board_hash(board)
         with self._lock:
             if digest in self._known:return True
-            if not self._index_loaded():return None
+            if self._faces is None:
+                stored=self._meta('canonical_faces')
+                if stored:self._set_base(json.loads(stored))
             score=self._score(board)
-            if score is None:return None
-            missing=self._db.execute('SELECT COUNT(*) FROM boards WHERE active=1 AND score=? AND local_sha IS NULL',(score,)).fetchone()[0]
-            return None if missing else False
+            # One statement reads a consistent SQLite snapshot even when the
+            # dashboard commits newly downloaded boards in another process.
+            known,loaded,missing=self._db.execute('''SELECT
+                EXISTS(SELECT 1 FROM boards WHERE local_sha=?),
+                EXISTS(SELECT 1 FROM metadata WHERE key IN ('index_loaded_at','index_checked_at') AND value!=''),
+                EXISTS(SELECT 1 FROM boards WHERE active=1 AND score=? AND local_sha IS NULL)''',
+                (digest,score)).fetchone()
+            if known:
+                self._known.add(digest)
+                return True
+            return None if not loaded or score is None or missing else False
 
     def status(self):
         with self._lock:
@@ -189,7 +213,7 @@ class LibraryMonitor:
             return {'schema_version':1,'running':False,'network_enabled':False,'mode':'offline',
                 'automatic_polling_enabled':False,'online_freshness_verified':False,
                 'snapshot_stale':True if has_index else None,'indexed_boards':total,
-                'cached_geometries':int(cached or 0),'known_exact_boards':len(self._known),'tiers':tiers,
+                'cached_geometries':int(cached or 0),'known_exact_boards':self._db.execute('SELECT COUNT(DISTINCT local_sha) FROM boards').fetchone()[0],'tiers':tiers,
                 'pending_geometries':total-int(cached or 0),
                 'high_score_indexed':sum(v['indexed'] for s,v in tiers.items() if int(s)>=465),
                 'high_score_cached':sum(v['cached'] for s,v in tiers.items() if int(s)>=465),

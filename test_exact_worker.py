@@ -53,6 +53,7 @@ class ExactWorkerTests(unittest.TestCase):
         seen = {}
         def solver(**kwargs):
             seen.update(kwargs)
+            self.assertFalse(self.read()['exact_counters_available'])
             kwargs['on_progress']({'phase': 'searching', 'branches': 10, 'conflicts': 3, 'max_depth': 5})
             return self.timeout()
         self.assertEqual(self.run_fake(solver, engine='sat', seconds=2, seed=123), 0)
@@ -63,6 +64,7 @@ class ExactWorkerTests(unittest.TestCase):
         self.assertLessEqual(seen['seconds'], 2)
         status = self.read()
         self.assertEqual(status['state'], 'finished_bounded_run')
+        self.assertTrue(status['exact_counters_available'])
         self.assertEqual(status['method'], 'exact')
         self.assertEqual(status['search_method'], 'exact-sat')
         self.assertEqual(status['compute_device'], 'CPU')

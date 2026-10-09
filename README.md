@@ -1,6 +1,6 @@
 # Eternity II Solver
 
-An **offline puzzle-search application** for the **five-clue Eternity II puzzle**, with CPU exact search and GPU board repair in one local dashboard. Every returned solution or promoted board is independently checked against the pieces, frame, five clues, and all 480 shared edges.
+A **local puzzle-search application** for the **five-clue Eternity II puzzle**, with CPU exact search and GPU board repair in one dashboard. Search workers remain offline. An optional dashboard downloader can refresh the public board library without uploading results or search progress. Every returned solution or promoted board is independently checked against the pieces, frame, five clues, and all 480 shared edges.
 
 **CPU exact search** offers a pruned Python DFS baseline, SAT through Glucose, and CP-SAT through OR-Tools. It seeks a complete **480/480** solution; the displayed saved best board does not improve incrementally during this search. DFS can resume a compatible saved frontier. SAT and CP-SAT restart their native search after Stop. See [Exact search](docs/EXACT_SEARCH.md) for the models, measured comparison scope, and limitations.
 
@@ -12,7 +12,7 @@ The [bounded sampler tests](docs/EXACT_SEARCH.md#measured-gpu-sampling-9-october
 
 BOINC-compatible worker development and the GPU DFS port remain **on hold**. Standalone CPU exact search does not execute assigned production tickets or submit results. The read-only workunit inspector remains available for examining saved inputs.
 
-**Version boundary:** v0.2.0 adds CPU exact search. Offline operation was introduced in v0.1.1. Legacy **v0.1.0** can automatically synchronize the public library; it does not acquire offline behavior without upgrading.
+**Version boundary:** v0.2.1 adds optional, read-only library downloads, disabled on fresh installs. It retains the search engines and measured results introduced in v0.2.0. Versions v0.1.1 and v0.2.0 disabled runtime library downloads. Legacy v0.1.0 could synchronize the library automatically; it does not acquire the new download controls without upgrading.
 
 ## Download and start
 
@@ -29,7 +29,7 @@ Open `EternityIISolver.exe` on Windows, `EternityIISolver.app` on macOS, or `Ete
 
 DFS, SAT, and hybrid use one CPU worker. CP-SAT allows **1–4** workers. GPU repair retains its backend selector and **32–32,768** parallel searches (default **4096**); those are GPU replicas, not CPU workers. Hybrid exposes the same numeric control as **GPU sample batch** for its short sampling stage. More replicas, larger batches, or more workers are not guaranteed to be faster. Stop the active search before changing settings.
 
-**Stop & save** requests a clean stop and saves local state. It preserves the best board and exports; DFS and GPU repair also save resumable search state. Hybrid reuses its frozen hints and separate DFS frontier on resume. SAT/CP-SAT native search state is not checkpointed. The dashboard stays available afterward. Closing the browser does not stop an active search.
+**Stop & save** requests a clean search stop and saves local state. It preserves the best board and exports; DFS and GPU repair also save resumable search state. Hybrid reuses its frozen hints and separate DFS frontier on resume. SAT/CP-SAT native search state is not checkpointed. The dashboard stays available afterward. Its separate **Library downloads** checkbox controls downloads independently of search Start/Stop. Closing the browser does not stop the search or an enabled downloader while the local dashboard server keeps running.
 
 Native archives include Python and application dependencies, but hardware drivers remain system supplied. Linux builds target the Ubuntu 22.04 runtime baseline and use the host system's `libstdc++` and `libgcc`, so newer GPU drivers load their matching C++ runtime. OpenCL support is conditional on the driver exposing a suitable GPU; normal search does not silently fall back to CPU OpenCL. AMD/Intel users should select **OpenCL** explicitly. Apple has [deprecated OpenCL](https://developer.apple.com/opencl/); macOS builds therefore depend on the runtime still exposed by the target Mac. The macOS archives are not Apple-notarized. They are built natively on macOS 15 Intel and macOS 14 ARM runners; older macOS versions are not certified.
 
@@ -56,7 +56,7 @@ EternityIISolver diagnose-exact
 EternityIISolver diagnose-hybrid --backend cuda --seconds 3 --replicas 4096
 ```
 
-`open` and the default no-argument launch open the persistent local dashboard. `start` additionally starts the worker. `run` runs the worker in the foreground; `--seconds 60` makes it bounded, otherwise it continues until stopped, an error occurs, a validated solution is found, or an exact search exhausts its scope. `exact` invokes the headless CPU worker directly. For compatibility, `start`/`run` default to `--method gpu`; select exact search explicitly. Runtime library downloads are disabled. `--no-library` skips GPU repair's local cache checks; it is not needed to prevent networking. `--no-browser` is available with `start`. Use `--help` on a command for its options.
+`open` and the default no-argument launch open the persistent local dashboard. `start` additionally starts the worker. `run` runs the worker in the foreground; `--seconds 60` makes it bounded, otherwise it continues until stopped, an error occurs, a validated solution is found, or an exact search exhausts its scope. `exact` invokes the headless CPU worker directly. For compatibility, `start`/`run` default to `--method gpu`; select exact search explicitly. Workers do not download or upload data. `--no-library` skips GPU repair's local cache checks; it does not control the separate dashboard downloader. Use the **Library downloads** checkbox for that. `--no-browser` is available with `start`. Use `--help` on a command for its options.
 
 For AMD or Intel GPUs, use `--backend opencl`. When several OpenCL devices exist, `ETERNITY_OPENCL_DEVICE` and `ETERNITY_OPENCL_PLATFORM` can filter device/platform names. `--backend cuda` selects NVIDIA CUDA explicitly; `auto` tries the available supported backends.
 
@@ -82,11 +82,11 @@ python -m pip install ".[cuda]"
 eternity-solver open
 ```
 
-A GitHub release wheel can also be installed with `python -m pip install path/to/eternity_ii_solver-0.2.0-py3-none-any.whl` when that release is available. The core dependencies include OR-Tools 9.15 and python-sat; no separate exact-search extra is required. Install the CUDA extra from the source checkout if desired. Downloading releases, installing dependencies, and manually opening documentation links require internet access; normal application operation does not. The repository is not claimed to be published on PyPI.
+A GitHub release wheel can also be installed with `python -m pip install path/to/eternity_ii_solver-0.2.1-py3-none-any.whl` when that release is available. The core dependencies include OR-Tools 9.15 and python-sat; no separate exact-search extra is required. Install the CUDA extra from the source checkout if desired. Search and manual export work offline. Optional library downloads, release/dependency downloads, and opening external documentation require internet access. The repository is not claimed to be published on PyPI.
 
 PyOpenCL and a hardware-vendor OpenCL implementation are separate requirements. A successful Python installation alone does not supply an AMD/Intel/NVIDIA GPU driver. See [PyOpenCL installation](https://documen.tician.de/pyopencl/misc.html#installation) and [CuPy installation](https://docs.cupy.dev/en/stable/install.html) for supported runtime configurations.
 
-## Saved state and offline cache
+## Saved state and library downloads
 
 Application resources are read-only. Runtime state is stored separately:
 
@@ -98,7 +98,11 @@ Application resources are read-only. Runtime state is stored separately:
 
 Use a command's `--state-dir PATH` option or the `ETERNITY_SOLVER_HOME` environment variable to choose another directory. Keep the state directory if you want to retain checkpoints and the board cache across upgrades. Dashboard/worker logs, current status, checkpoints, the library cache, and verified results live there; they are not written into the app bundle. GPU populations, ordinary DFS frontiers, and hybrid hints/frontiers use separate saved state and are validated before resuming. SAT/CP-SAT retain run status and the saved best board but rebuild their native search on each start.
 
-The application uses bundled and previously saved board data only. It does not automatically refresh the public index, download board arrangements, upload results, or send telemetry. The dashboard connects only to its local server; its research link opens an external website only when selected. Cached metadata is **not** a complete set of cached arrangements, and the snapshot may be old. An absent board cannot establish worldwide novelty.
+The **Library downloads** checkbox is off on fresh installs, and its setting is saved independently of the search settings. With downloads disabled, bundled and previously cached boards remain available. Enabling it lets the local dashboard server check the public index every **15 minutes** and fetch missing public arrangements gradually, with requests at least **1 second apart**. Existing cached arrangements are reused. Search Start/Stop does not control downloads. Disabling the checkbox stops further requests; one already in progress may finish.
+
+Only the dashboard downloader accesses the public library. It uses GET requests to the fixed public index and board endpoints, with no redirects, query strings, request bodies, authentication, cookies, or proxies. It sends no local discoveries, search progress, node/work counts, or telemetry, and never uploads results. The remote server can still log ordinary GET requests, IP addresses, and the application's user-agent. The browser dashboard itself talks to its local server; its research link opens an external website only when selected.
+
+Current duplicate checks consult the shared SQLite cache, so a running GPU worker can see arrangements downloaded by the dashboard. Historical “not found” results describe the snapshot at the time of the check. Indexed metadata is **not** a complete set of cached arrangements; incomplete or old snapshots cannot establish worldwide novelty.
 
 Click **Export best board**, or run `EternityIISolver export-best --state-dir PATH`, to validate and save the best available board under the state directory's `exports/` folder. Omit `--state-dir PATH` to use the normal state directory. Export works while the search is stopped and provides board JSON, a readable layout, and a validation report. The dashboard keeps local download links visible for review. Nothing is uploaded automatically. The JSON uses library-style candidate fields; the project's accepted upload schema is unconfirmed, and these files are not completed CPU workunits or proof of search coverage. Review the files before any manual sharing.
 
@@ -151,7 +155,7 @@ python scripts/build_release.py --flavor opencl
 
 Build on the target operating system and architecture; PyInstaller does not cross-compile these archives. Each build validates the bundled 466 board, reads status, loads the diagnostic/BOINC command help, and runs tiny solvable and infeasible cases through all three CPU engines in the frozen executable before archiving. `release-assets/` receives the native archive and its SHA-256 file. To build Python packages, run `python -m build`; `scripts/check_wheel.py` checks that a wheel contains the curated resources and excludes runtime data.
 
-GitHub Actions builds Windows x64, Linux x64, macOS Intel, and macOS ARM separately. Branch/PR runs expose downloadable workflow artifacts. A pushed version tag such as `v0.2.0` must match `pyproject.toml`; after every build succeeds, the workflow publishes the native archives, Python wheel/source archive, and checksums to a GitHub release. Native archives include the CPU exact-search dependencies. A built package and a successful CPU smoke test do not establish compatibility with every GPU or driver.
+GitHub Actions builds Windows x64, Linux x64, macOS Intel, and macOS ARM separately. Branch/PR runs expose downloadable workflow artifacts. A pushed version tag such as `v0.2.1` must match `pyproject.toml`; after every build succeeds, the workflow publishes the native archives, Python wheel/source archive, and checksums to a GitHub release. Native archives include the CPU exact-search dependencies. A built package and a successful CPU smoke test do not establish compatibility with every GPU or driver.
 
 ## License
 

@@ -164,6 +164,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
               'port': port, 'state_dir': str(home), 'start_time': _now(),
               'last_update': _now(), 'elapsed_seconds': 0.0, 'best_score': None,
               'source_best_score': 466, 'branches': 0, 'conflicts': 0,
+              'exact_counters_available': engine in ('dfs', 'hybrid'),
               'exact_phase': 'starting', 'scope': SCOPE,
               'external_network_enabled': False,
               'library': {'enabled': False, 'network_enabled': False, 'mode': 'offline'},
@@ -222,6 +223,8 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                 value = progress.get(key)
                 if type(value) in (int, float) and math.isfinite(value) and value >= 0:
                     status[key] = value
+                    if key == 'branches':
+                        status['exact_counters_available'] = True
             phase = progress.get('phase')
             if isinstance(phase, str):
                 status['exact_phase'] = phase[:80]

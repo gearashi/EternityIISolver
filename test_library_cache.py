@@ -140,6 +140,42 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(again.status(),before)
         finally:again.close();again.close()
 
+    def test_reader_observes_another_process_cache_commits(self):
+        self.mon.ingest_index(INDEX)
+        other=LibraryMonitor(self.path)
+        try:
+            self.assertIsNone(self.mon.is_known(DOC466['board']))
+            other.register_known_document(DOC466,SHA466)
+            self.assertTrue(self.mon.is_known(DOC466['board']))
+            self.assertEqual(self.mon.status()['known_exact_boards'],1)
+            other.register_known_document(DOC465,SEED.stem)
+            self.assertTrue(self.mon.is_known(DOC465['board']))
+            self.assertEqual(self.mon.status()['known_exact_boards'],2)
+        finally:other.close()
+
+    def test_invalid_refresh_preserves_cached_scores_and_snapshot(self):
+        self.mon.ingest_index(INDEX)
+        self.mon.register_known_document(DOC466,SHA466)
+        before=self.mon.status()
+        raw=(self.path/'index.json.gz').read_bytes()
+        bad=json.loads(json.dumps(INDEX));bad['boards'][0]['score']=480
+        with self.assertRaisesRegex(ValueError,'validated cached'):
+            self.mon.ingest_index(bad)
+        self.assertEqual(self.mon.status(),before)
+        self.assertEqual((self.path/'index.json.gz').read_bytes(),raw)
+        self.assertTrue(self.mon.is_known(DOC466['board']))
+        self.assertEqual(list(self.path.glob('index.*.tmp')),[])
+
+    def test_public_identity_cannot_be_rebound(self):
+        self.mon.register_known_document(DOC466,SHA466)
+        # Force only the claimed score comparison through to isolate identity.
+        with self.mon._db:
+            self.mon._db.execute('UPDATE boards SET score=? WHERE public_sha=?',(DOC465['score'],SHA466))
+        with self.assertRaisesRegex(ValueError,'identity changed'):
+            self.mon.register_known_document(DOC465,SHA466)
+        self.assertTrue(self.mon.is_known(DOC466['board']))
+        self.assertEqual(self.mon.status()['known_exact_boards'],1)
+
     def test_runtime_has_no_download_implementation_or_endpoint(self):
         self.assertFalse(hasattr(LibraryMonitor,'_request'))
         self.assertFalse(hasattr(LibraryMonitor,'_decode'))
