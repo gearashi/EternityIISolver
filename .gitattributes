@@ -15,3 +15,6 @@ data/** -text whitespace=cr-at-eol
 *.png binary
 *.zip binary
 *.gz binary
+
+# Retain byte-level checksums of recorded experimental evidence.
+docs/evidence/*.json -text whitespace=cr-at-eol
