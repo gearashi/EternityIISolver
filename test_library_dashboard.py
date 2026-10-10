@@ -1,5 +1,6 @@
 """Manual archive controls with fake jobs: no external requests or real search."""
 import json
+import http.client
 import os
 from pathlib import Path
 import shutil
@@ -63,10 +64,26 @@ class LibraryDashboardTests(unittest.TestCase):
     def tearDown(self):
         self.server.shutdown(); self.server.server_close(); self.thread.join(timeout=3)
         self.tmp.cleanup()
-    def request(self, body, path='/library-archive', origin=None, headers=None):
+    def request(self, body, path='/library-archive', origin=None, headers=None, *, headers_only=False):
         options = {'Content-Type': 'application/json', 'Origin': origin or self.base}
         options.update(headers or {})
-        req = urllib.request.Request(self.base + path, data=json.dumps(body).encode(), headers=options)
+        payload = json.dumps(body).encode()
+        if headers_only:
+            # These checks must reject before reading the advertised body.
+            # Sending a body after an early rejection can race the server's
+            # close and reset the TCP connection on Windows (WinError 10053).
+            connection = http.client.HTTPConnection('127.0.0.1', self.server.port, timeout=3)
+            try:
+                connection.putrequest('POST', path, skip_host=True)
+                connection.putheader('Host', options.pop('Host', f'127.0.0.1:{self.server.port}'))
+                for key, value in options.items(): connection.putheader(key, value)
+                connection.putheader('Content-Length', str(len(payload)))
+                connection.endheaders()
+                response = connection.getresponse()
+                return response.status, json.load(response)
+            finally:
+                connection.close()
+        req = urllib.request.Request(self.base + path, data=payload, headers=options)
         try:
             with self.opener.open(req, timeout=3) as response: return response.status, json.load(response)
         except urllib.error.HTTPError as exc: return exc.code, json.load(exc)
@@ -124,11 +141,14 @@ function snapshot(){const result={};for(const [id,node] of elements)result[id]={
         for endpoint in ('/library-archive', '/library-archive/cancel'):
             for bad in ({'enabled': True}, {'nodes': 1000}, {'url': 'https://example.invalid'}, []):
                 self.assertEqual(self.request(bad, endpoint)[0], 400)
-            self.assertEqual(self.request({}, endpoint, 'https://foreign.invalid')[0], 403)
-            self.assertEqual(self.request({}, endpoint, headers={'Host': 'foreign.invalid'})[0], 403)
-            self.assertEqual(self.request({}, endpoint, headers={'Content-Type': 'text/plain'})[0], 415)
-        self.assertEqual(self.request({'padding': 'x' * 4096})[0], 413)
-        self.assertEqual(self.request({'enabled': True}, '/library-downloads')[0], 404)
+            self.assertEqual(self.request({}, endpoint, 'https://foreign.invalid', headers_only=True),
+                             (403, {'error': 'Same-origin dashboard request required'}))
+            self.assertEqual(self.request({}, endpoint, 'http://foreign.invalid',
+                                          headers={'Host': 'foreign.invalid'}, headers_only=True),
+                             (403, {'error': 'Local dashboard Host required'}))
+            self.assertEqual(self.request({}, endpoint, headers={'Content-Type': 'text/plain'}, headers_only=True)[0], 415)
+        self.assertEqual(self.request({'padding': 'x' * 4096}, headers_only=True)[0], 413)
+        self.assertEqual(self.request({'enabled': True}, '/library-downloads', headers_only=True)[0], 404)
         self.assertEqual(self.created[0].starts, 0); self.assertEqual(self.created[0].cancels, 0)
     def test_restart_ignores_old_opt_in_and_does_not_resume_jobs(self):
         with tempfile.TemporaryDirectory() as directory:
