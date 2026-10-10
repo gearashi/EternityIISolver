@@ -1,393 +1,187 @@
-"""Mocked public-library transport checks; no test contacts the project."""
-import copy
+"""Manual archive transfer tests: synthetic gzip responses, no outside network."""
 import gzip
+import io
 import json
-import os
 from pathlib import Path
 import tempfile
 import threading
-import time
 import unittest
 from unittest.mock import patch
 
-import library_download
-from library_download import LibraryDownloader
-
-DATA = Path(__file__).resolve().parent / 'data'
-DOC466 = json.loads((DATA / 'record466.json').read_text(encoding='utf-8'))
-SHA466 = '2c037e70f7e93518a48733c7aacd096226b7f23728efabd6289088b91c0945cd'
-SEED = next(path for path in (DATA / 'seeds').glob('*.json') if len(path.stem) == 64)
-DOC465 = json.loads(SEED.read_text(encoding='utf-8'))
-INDEX = {'schema': 'eternity2-board-library-index/v2', 'count': 2, 'generated_at': 'fixture',
-         'boards': [{'sha': SEED.stem, 'score': 465, 'has_content': True},
-                    {'sha': SHA466, 'score': 466, 'has_content': True}]}
+from app_paths import resource_root
+from library_download import LibraryArchiveManager, ARCHIVE_HOST, ARCHIVE_PATH
+from validator import load_bundle
 
 
 class Response:
-    def __init__(self, document=None, *, body=None, status=200, headers=None, on_read=None):
+    status = 200
+    def __init__(self, body, *, status=200, headers=None):
         self.status = status
-        self.body = json.dumps(document).encode() if body is None else body
-        self.headers = {'content-type': 'application/json', 'content-length': str(len(self.body))}
-        self.headers.update({key.lower(): value for key, value in (headers or {}).items()})
-        self.offset = 0
-        self.on_read = on_read
-
+        self.body = io.BytesIO(body)
+        self.headers = {'Content-Type': 'application/gzip', **(headers or {})}
     def getheader(self, name):
-        return self.headers.get(name.lower())
-
-    def read(self, count):
-        if self.on_read:
-            self.on_read()
-        chunk = self.body[self.offset:self.offset+count]
-        self.offset += len(chunk)
-        return chunk
-
-
-class FakeSocket:
-    def __init__(self):
-        self.shutdown_calls = 0
-        self.timeout = None
-
-    def shutdown(self, how):
-        self.shutdown_calls += 1
-
-    def settimeout(self, timeout):
-        self.timeout = timeout
+        return self.headers.get(name)
+    def read1(self, size):
+        return self.body.read(size)
 
 
 class Connection:
-    def __init__(self, transport, host, timeout):
-        self.transport = transport
-        self.host = host
-        self.timeout = timeout
-        self.sock = FakeSocket()
+    def __init__(self, response, calls):
+        self.response = response
+        self.calls = calls
+        self.sock = None
         self.closed = False
-        self.call = None
-        self.response = None
-
     def request(self, method, path, body=None, headers=None):
-        self.call = (method, path, body, dict(headers))
-        if not self.transport.responses:
-            raise AssertionError('Unexpected extra request')
-        self.response = self.transport.responses.pop(0)
-        if isinstance(self.response, Exception):
-            raise self.response
-
+        self.calls.append((method, path, body, headers))
     def getresponse(self):
         return self.response
-
     def close(self):
         self.closed = True
 
 
-class Transport:
-    def __init__(self):
-        self.responses = []
-        self.connections = []
-
-    def __call__(self, host, *, timeout):
-        connection = Connection(self, host, timeout)
-        self.connections.append(connection)
-        return connection
-
-
-class DownloadTests(unittest.TestCase):
+class ManualArchiveTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix='eternity-download-test-')
+        self.temporary = tempfile.TemporaryDirectory(prefix='eternity-manual-archive-')
         self.path = Path(self.temporary.name)
-        self.transport = Transport()
-        self.network = patch('library_download.http.client.HTTPSConnection', self.transport)
-        self.network.start()
-        self.mon = LibraryDownloader(self.path, pieces_path=DATA/'pieces.txt')
-
+        bundle = load_bundle()
+        self.record = {'sha': '2c037e70f7e93518a48733c7aacd096226b7f23728efabd6289088b91c0945cd',
+                       'score': 466, 'breaks': 14, 'board': list(bundle.record_board)}
+        self.header = {'schema': 1, 'count': 1, 'generated_at': '2026-10-09T23:45:22Z'}
+        self.payload = gzip.compress(('\n'.join(json.dumps(v) for v in (self.header, self.record))+'\n').encode())
+        self.manager = LibraryArchiveManager(self.path, pieces_path=resource_root()/'data/pieces.txt')
     def tearDown(self):
-        self.mon.close()
-        self.network.stop()
+        self.assertTrue(self.manager.close())
+        self.assertEqual(self.path.resolve().parent, Path(tempfile.gettempdir()).resolve())
         self.temporary.cleanup()
-
-    def enable_manual(self):
-        # Explicitly enable through the public API, but drive requests manually
-        # for deterministic tests without wall-clock sleeps.
-        with patch.object(self.mon, '_start_thread'):
-            self.mon.start()
-
-    def permit_request(self):
-        self.mon._next_request = 0
-
-    def wait_until(self, predicate, seconds=3):
-        deadline = time.monotonic()+seconds
-        while time.monotonic() < deadline:
-            if predicate():
-                return
-            time.sleep(.005)
-        self.fail('Timed out waiting for mocked downloader')
-
-    def test_construction_poll_and_warm_remain_offline_until_start(self):
-        self.mon.ingest_index(INDEX)
-        self.mon.poll_once()
-        self.assertFalse(self.mon.warm_once())
-        self.assertEqual(self.transport.connections, [])
-        status = self.mon.status()
-        self.assertEqual(status['mode'], 'offline')
-        self.assertFalse(status['network_enabled'])
-        self.assertFalse(status['uploads_enabled'])
-        self.assertFalse(status['progress_reporting_enabled'])
-        with self.assertRaisesRegex(ValueError, 'trusted'):
-            LibraryDownloader(self.path/'missing-pieces')
-
-    def test_transport_is_fixed_https_get_without_private_headers_or_proxies(self):
-        with self.mon._db:
-            self.mon._put_meta('etag', '"fake"\r\nAuthorization: secret')
-            self.mon._put_meta('last_modified', 'Cookie: secret')
-        self.transport.responses = [Response(INDEX, headers={'Set-Cookie': 'session=untrusted'})]
-        self.enable_manual()
-        with patch.dict(os.environ, {'HTTPS_PROXY': 'http://foreign.invalid:1234', 'HTTP_PROXY': 'http://foreign.invalid:1234'}):
-            self.mon.poll_once()
-        connection = self.transport.connections[0]
-        method, path, body, headers = connection.call
-        self.assertEqual((connection.host, connection.timeout), (library_download.HOST, 20))
-        self.assertEqual((method, path, body), ('GET', '/library/index', None))
-        self.assertEqual(set(headers), {'Accept', 'Accept-Encoding', 'User-Agent'})
+    def run_download(self, response):
+        calls = []
+        connection = Connection(response, calls)
+        with patch('library_download.http.client.HTTPSConnection', return_value=connection) as factory:
+            self.assertTrue(self.manager.start_download())
+            self.manager._thread.join(8)
+            self.assertFalse(self.manager._thread.is_alive())
+        factory.assert_called_once_with(ARCHIVE_HOST, timeout=20)
         self.assertTrue(connection.closed)
-        status = self.mon.status()
-        self.assertEqual(status['network_requests_this_session'], 1)
-        self.assertEqual(status['successful_requests_this_session'], 1)
-        self.assertTrue(status['online_freshness_verified'])
-        self.assertEqual(status['mode'], 'read-only-downloads')
-        self.mon.poll_once()
-        self.assertFalse(self.mon.warm_once(), 'Details must wait at least one second')
-        self.assertEqual(len(self.transport.connections), 1)
-
-    def test_arbitrary_urls_and_malformed_hashes_never_reach_transport(self):
-        self.enable_manual()
-        for sha in ('A'*64, 'a'*63, 'a'*65, 'https://other.invalid/', '../index', 'a'*64+'?token=x', '\r\n', True):
-            with self.subTest(sha=sha), self.assertRaises(ValueError):
-                self.mon._fetch(sha)
-        self.assertEqual(self.transport.connections, [])
-
-    def test_canonical_pieces_are_checked_before_creating_download_cache(self):
-        wrong = self.path/'wrong-pieces.txt'
-        rows = (DATA/'pieces.txt').read_text().splitlines()
-        first = rows[0].split(); first[0] = str((int(first[0])+1) % 23)
-        rows[0] = ' '.join(first)
-        wrong.write_text('\n'.join(rows))
-        rejected = self.path/'rejected-cache'
-        with self.assertRaisesRegex(ValueError, 'trusted official'):
-            LibraryDownloader(rejected, pieces_path=wrong)
-        self.assertFalse(rejected.exists())
-        self.assertEqual(self.transport.connections, [])
-
-    def test_redirects_are_errors_and_are_never_followed(self):
-        self.enable_manual()
-        for code in (301, 302, 303, 307, 308):
-            self.permit_request()
-            self.transport.responses.append(Response({}, status=code, headers={'Location': 'https://foreign.invalid/upload'}))
-            self.mon.poll_once()
-        self.assertEqual(len(self.transport.connections), 5)
-        self.assertTrue(all(c.host == library_download.HOST and c.call[1] == '/library/index' and c.closed for c in self.transport.connections))
-        self.assertEqual(self.mon.status()['failed_requests_this_session'], 5)
-        self.assertFalse(self.mon.status()['full_metadata_loaded'])
-
-    def test_gzip_index_and_only_missing_details_highest_score_first(self):
-        index = copy.deepcopy(INDEX)
-        index['boards'].append({'sha': 'f'*64, 'score': 480, 'has_content': False})
-        index['count'] = 3
-        self.transport.responses = [Response(body=gzip.compress(json.dumps(index).encode()), headers={'Content-Encoding': 'gzip'}),
-                                    Response(DOC466), Response(DOC465)]
-        self.enable_manual()
-        self.mon.poll_once()
-        self.permit_request(); self.assertTrue(self.mon.warm_once())
-        self.permit_request(); self.assertTrue(self.mon.warm_once())
-        self.permit_request(); self.assertFalse(self.mon.warm_once())
-        self.assertEqual([c.call[1] for c in self.transport.connections],
-                         ['/library/index', '/library/board/'+SHA466, '/library/board/'+SEED.stem])
-        self.assertTrue(self.mon.is_known(DOC466['board']))
-        self.assertTrue(self.mon.is_known(DOC465['board']))
-        self.assertEqual(self.mon.status()['detail_downloads_this_session'], 2)
-        self.assertTrue(all(c.closed for c in self.transport.connections))
-
-    def test_cached_geometry_is_reused_across_refresh_and_restart(self):
-        self.mon.ingest_index(INDEX)
-        self.mon.register_known_document(DOC466, SHA466)
-        self.mon.close()
-        self.mon = LibraryDownloader(self.path, pieces_path=DATA/'pieces.txt')
-        self.assertTrue(self.mon.is_known(DOC466['board']))
-        self.transport.responses = [Response(INDEX), Response(DOC465)]
-        self.enable_manual(); self.mon.poll_once()
-        self.permit_request(); self.assertTrue(self.mon.warm_once())
-        self.assertEqual(self.transport.connections[-1].call[1], '/library/board/'+SEED.stem)
-        self.permit_request(); self.assertFalse(self.mon.warm_once())
-        self.assertEqual(len(self.transport.connections), 2)
-
-    def test_failures_back_off_immediately_and_persist_across_restart(self):
-        self.transport.responses = [OSError('fixture connection failure')]
-        self.enable_manual(); self.mon.poll_once()
-        for _ in range(5):
-            self.mon.poll_once(); self.mon.warm_once()
-        status = self.mon.status()
-        self.assertEqual(status['network_requests_this_session'], 1)
-        self.assertEqual(status['failed_requests_this_session'], 1)
-        self.assertGreater(status['next_request_in_seconds'], 29)
-        self.assertIsNotNone(status['last_error'])
-        self.mon.stop(0); self.enable_manual(); self.mon.poll_once()
-        self.assertEqual(len(self.transport.connections), 1)
-        self.mon.close()
-        self.mon = LibraryDownloader(self.path, pieces_path=DATA/'pieces.txt')
-        self.enable_manual(); self.mon.poll_once()
-        self.assertEqual(len(self.transport.connections), 1)
-
-    def test_failed_detail_has_retry_marker_and_keeps_cache_valid(self):
-        self.mon.ingest_index(INDEX)
-        self.transport.responses = [OSError('fixture detail failure')]
-        self.enable_manual()
-        self.assertFalse(self.mon.warm_once())
-        row = self.mon._db.execute('SELECT retry_after,failures,local_sha FROM boards WHERE public_sha=?', (SHA466,)).fetchone()
-        self.assertGreater(row[0], time.time())
-        self.assertEqual(row[1:], (1, None))
-        self.assertEqual(self.mon.status()['cached_geometries'], 0)
-
-    def test_failed_top_detail_does_not_starve_other_missing_boards(self):
-        self.mon.ingest_index(INDEX)
-        self.transport.responses = [OSError('broken top detail'), Response(DOC465)]
-        self.enable_manual()
-        self.assertFalse(self.mon.warm_once())
-        self.permit_request()  # Simulate expiration of the shorter global backoff.
-        self.assertTrue(self.mon.warm_once())
-        self.assertEqual([c.call[1] for c in self.transport.connections],
-                         ['/library/board/'+SHA466, '/library/board/'+SEED.stem])
-        self.assertTrue(self.mon.is_known(DOC465['board']))
-        self.assertIsNone(self.mon.is_known(DOC466['board']))
-
-    def test_connection_setup_failure_is_counted_and_backed_off(self):
-        self.enable_manual()
-        with patch('library_download.http.client.HTTPSConnection', side_effect=OSError('TLS fixture failure')):
-            self.mon.poll_once(); self.mon.poll_once()
-        status = self.mon.status()
-        self.assertEqual(status['network_requests_this_session'], 1)
-        self.assertEqual(status['failed_requests_this_session'], 1)
-        self.assertEqual(status['requests_in_flight'], 0)
-        self.assertGreater(status['next_request_in_seconds'], 29)
-
-    def test_invalid_or_changed_index_keeps_previous_cache(self):
-        self.mon.ingest_index(INDEX); self.mon.register_known_document(DOC466, SHA466)
-        saved = (self.path/'index.json.gz').read_bytes()
-        bad = copy.deepcopy(INDEX); bad['boards'][1]['score'] = 480
-        malformed = copy.deepcopy(INDEX); malformed['boards'][1] = None
-        self.transport.responses = [Response(bad), Response(malformed), Response({'schema': 'wrong'})]
-        self.enable_manual()
-        for _ in range(3):
-            self.permit_request(); self.mon.poll_once()
-            self.assertEqual((self.path/'index.json.gz').read_bytes(), saved)
-            self.assertTrue(self.mon.is_known(DOC466['board']))
-        self.assertEqual(self.mon.status()['failed_requests_this_session'], 3)
-
-    def test_invalid_detail_cannot_poison_palette_or_geometry(self):
-        self.mon.ingest_index(INDEX)
-        base = self.mon._meta('canonical_faces')
-        bad = copy.deepcopy(DOC466); bad['board'][17] = bad['board'][18]
-        wrong_edges = copy.deepcopy(DOC466); wrong_edges['board_edges'] = 'b'*1024
-        self.enable_manual()
-        for doc in (bad, wrong_edges, dict(DOC466, score=480)):
-            self.permit_request()
-            with self.mon._db:
-                self.mon._db.execute('UPDATE boards SET retry_after=0')
-            self.transport.responses.append(Response(doc))
-            self.assertFalse(self.mon.warm_once())
-            self.assertEqual(self.mon._meta('canonical_faces'), base)
-            self.assertEqual(self.mon.status()['known_exact_boards'], 0)
-
-    def test_response_type_header_and_json_validation(self):
-        cases = [Response({}, headers={'Content-Type': 'text/html'}),
-                 Response({}, headers={'Content-Encoding': 'br'}),
-                 Response({}, headers={'Content-Length': '-1'}),
-                 Response({}, headers={'Content-Length': '９'}),
-                 Response({}, headers={'Content-Length': str(library_download.INDEX_LIMIT+1)}),
-                 Response(body=b'{"a":1,"a":2}'), Response(body=b'{"a":NaN}'),
-                 Response(body=b'not JSON'), Response({}, headers={'Content-Length': '99'})]
-        self.enable_manual()
-        for response in cases:
-            self.permit_request(); self.transport.responses.append(response); self.mon.poll_once()
-        self.assertEqual(self.mon.status()['failed_requests_this_session'], len(cases))
-        self.assertFalse(self.mon.status()['full_metadata_loaded'])
-        self.assertTrue(all(c.closed for c in self.transport.connections))
-
-    def test_compressed_and_decompressed_limits_and_bad_gzip(self):
-        self.enable_manual()
-        bomb = gzip.compress(json.dumps({'padding': 'x'*3000}).encode())
-        cases = [Response(body=b' '*513, headers={'Content-Length': None}),
-                 Response(body=bomb, headers={'Content-Encoding': 'gzip'}),
-                 Response(body=gzip.compress(b'{}')[:-3], headers={'Content-Encoding': 'gzip'}),
-                 Response(body=gzip.compress(b'{}')+gzip.compress(b'{}'), headers={'Content-Encoding': 'gzip'})]
-        with patch.object(library_download, 'INDEX_LIMIT', 512):
-            for response in cases:
-                self.permit_request(); self.transport.responses.append(response); self.mon.poll_once()
-        self.assertEqual(self.mon.status()['failed_requests_this_session'], 4)
-        self.assertFalse(self.mon.status()['full_metadata_loaded'])
-
-    def test_request_deadline_aborts_slow_reads(self):
-        now = [10.0]
-        def slow_read():
-            now[0] += 21
-        self.transport.responses = [Response(INDEX, on_read=slow_read)]
-        self.enable_manual()
-        self.permit_request()
-        with patch('library_download.time.monotonic', side_effect=lambda: now[0]):
-            self.mon.poll_once()
-        self.assertEqual(self.mon.status()['failed_requests_this_session'], 1)
-        self.assertTrue(self.transport.connections[0].closed)
-
-    def test_stop_zero_is_immediate_status_stays_responsive_and_close_defers(self):
-        entered, release = threading.Event(), threading.Event()
-        def blocked_read():
-            entered.set()
-            if not release.wait(5):
-                raise TimeoutError('fixture was not released')
-        self.transport.responses = [Response(INDEX, on_read=blocked_read)]
-        self.mon.start()
-        try:
-            self.assertTrue(entered.wait(2))
-            began = time.monotonic()
-            self.assertFalse(self.mon.stop(timeout=0))
-            status = self.mon.status()
-            self.assertLess(time.monotonic()-began, .5)
+        return self.manager.status(), calls
+    def test_constructor_status_and_legacy_start_do_not_connect(self):
+        with patch('socket.socket.connect', side_effect=AssertionError('Network forbidden')), \
+             patch('threading.Thread.start', side_effect=AssertionError('No automatic jobs')):
+            other = LibraryArchiveManager(self.path/'other', pieces_path=resource_root()/'data/pieces.txt')
+            try:
+                other.start(); other.poll_once(); other.warm_once()
+                status = other.status()
+                self.assertEqual(status['archive']['phase'], 'idle')
+                self.assertFalse(status['network_enabled'])
+                self.assertEqual(status['network_requests_this_session'], 0)
+                self.assertFalse(status['automatic_polling_enabled'])
+            finally: other.close()
+    def test_one_get_streams_archive_then_merges_offline_and_reuses_duplicates(self):
+        for expected_new, expected_reused in ((1,0),(0,1)):
+            status, calls = self.run_download(Response(self.payload))
+            self.assertEqual(len(calls), 1)
+            method, path, body, headers = calls[0]
+            self.assertEqual((method,path,body), ('GET', ARCHIVE_PATH, None))
+            self.assertEqual(set(headers), {'Accept','Accept-Encoding','User-Agent'})
+            self.assertNotIn('?', path)
+            self.assertEqual(status['archive']['phase'], 'complete', status)
+            self.assertEqual(status['archive']['new_boards'], expected_new)
+            self.assertEqual(status['archive']['already_cached'], expected_reused)
+            self.assertEqual(status['known_exact_boards'], 1)
             self.assertFalse(status['network_enabled'])
-            self.assertEqual(status['mode'], 'offline')
-            self.assertEqual(status['requests_in_flight'], 1)
-            self.assertFalse(self.mon.close(timeout=0))
-            self.assertFalse(self.mon._closed, 'SQLite must remain open while the request unwinds')
-        finally:
-            release.set()
-        self.wait_until(lambda: self.mon._closed)
-        status = self.mon.status()
-        self.assertEqual(status['cancelled_requests_this_session'], 1)
-        self.assertEqual(status['requests_in_flight'], 0)
-        self.assertTrue(self.mon.close())
-
-    def test_disable_reenable_during_request_never_spawns_duplicate_downloads(self):
-        entered, release = threading.Event(), threading.Event()
-        def blocked_read():
+            self.assertFalse(status['uploads_enabled'])
+            self.assertFalse(status['progress_reporting_enabled'])
+            self.assertFalse(status['automatic_polling_enabled'])
+            self.assertTrue(Path(status['archive']['archive_path']).is_file())
+            self.assertEqual(list(self.path.glob('.archive-download-*')), [])
+    def test_redirect_error_and_unexpected_payload_never_retry_or_change_cache(self):
+        cases = [Response(b'',status=302,headers={'Location':'https://example.invalid/'}),
+                 Response(b'',status=503), Response(b'<html/>',headers={'Content-Type':'text/html'}),
+                 Response(self.payload,headers={'Content-Length':str(len(self.payload)+1)}),
+                 Response(self.payload,headers={'Content-Encoding':'gzip'}),
+                 Response(b'broken gzip'), Response(b'')]
+        for response in cases:
+            with self.subTest(response=response):
+                status, calls = self.run_download(response)
+                self.assertEqual(status['archive']['phase'], 'error')
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(status['known_exact_boards'], 0)
+                self.assertTrue(status['archive_can_start'])
+                self.assertEqual(list(self.path.glob('.archive-download-*')), [])
+    def test_size_limits_are_checked_with_and_without_length(self):
+        for headers in ({'Content-Length':'101'}, {}):
+            with self.subTest(headers=headers), patch('library_download.MAX_COMPRESSED', 100):
+                status,calls = self.run_download(Response(b'x'*101,headers=headers))
+                self.assertEqual(status['archive']['phase'], 'error')
+                self.assertEqual(status['known_exact_boards'], 0)
+                self.assertEqual(len(calls),1)
+    def test_busy_request_does_not_queue_a_second_transfer_and_cancel_unwinds(self):
+        entered = threading.Event(); release = threading.Event()
+        class WaitingResponse(Response):
+            def read1(self, size):
+                entered.set()
+                if not release.wait(5): raise TimeoutError('Test transfer timeout')
+                raise OSError('Connection interrupted')
+        calls=[]
+        connection=Connection(WaitingResponse(self.payload),calls)
+        class Sock:
+            def shutdown(self,*args):release.set()
+            def settimeout(self,*args):pass
+        connection.sock=Sock()
+        with patch('library_download.http.client.HTTPSConnection',return_value=connection) as factory:
+            self.assertTrue(self.manager.start_download())
+            self.assertTrue(entered.wait(3))
+            self.assertTrue(self.manager.status()['network_enabled'])
+            self.assertFalse(self.manager.start_download())
+            self.assertTrue(self.manager.cancel())
+            self.manager._thread.join(5)
+            self.assertFalse(self.manager._thread.is_alive())
+            factory.assert_called_once()
+        status=self.manager.status()
+        self.assertEqual(status['archive']['phase'],'cancelled')
+        self.assertEqual(status['known_exact_boards'],0)
+        self.assertFalse(status['network_enabled'])
+        self.assertFalse(status['archive_can_cancel'])
+        self.assertEqual(len(calls),1)
+    def test_cancel_during_validation_preserves_cache(self):
+        from archive_import import ArchiveCancelled
+        entered=threading.Event();release=threading.Event()
+        def importing(*args,should_cancel,on_progress,**kwargs):
+            on_progress({'phase':'validating','validated_boards':0,'total_boards':1})
             entered.set()
-            if not release.wait(5):
-                raise TimeoutError('fixture was not released')
-        self.transport.responses = [Response(INDEX, on_read=blocked_read), Response(INDEX)]
-        self.mon.start()
+            if not release.wait(5):raise TimeoutError('Test import timeout')
+            self.assertTrue(should_cancel())
+            raise ArchiveCancelled('Cancelled fixture')
+        connection=Connection(Response(self.payload),[])
+        with patch('library_download.http.client.HTTPSConnection',return_value=connection), \
+             patch('library_download.import_archive',side_effect=importing):
+            self.manager.start_download();self.assertTrue(entered.wait(3))
+            self.assertFalse(self.manager.status()['network_enabled'])
+            self.assertTrue(self.manager.cancel());release.set()
+            self.manager._thread.join(5)
+        self.assertEqual(self.manager.status()['archive']['phase'],'cancelled')
+        self.assertEqual(self.manager.status()['known_exact_boards'],0)
+    def test_thread_launch_failure_can_be_retried_and_closed(self):
+        with patch('library_download.threading.Thread.start', side_effect=RuntimeError('Thread unavailable')):
+            self.assertFalse(self.manager.start_download())
+        status = self.manager.status()
+        self.assertEqual(status['archive']['phase'], 'error')
+        self.assertFalse(status['archive']['running'])
+        self.assertTrue(status['archive_can_start'])
+        self.assertEqual(status['network_requests_this_session'], 0)
+        status, calls = self.run_download(Response(self.payload))
+        self.assertEqual(status['archive']['phase'], 'complete')
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(self.manager.close())
+
+    def test_closed_manager_cannot_start_and_cached_counts_survive_restart(self):
+        self.run_download(Response(self.payload))
+        self.manager.close()
+        with self.assertRaises(RuntimeError):self.manager.start_download()
+        again=LibraryArchiveManager(self.path,pieces_path=resource_root()/'data/pieces.txt')
         try:
-            self.assertTrue(entered.wait(2))
-            original_thread = self.mon._thread
-            self.mon.stop(timeout=0)
-            self.mon.start(); self.mon.start()
-            self.assertIs(self.mon._thread, original_thread)
-            self.assertEqual(len(self.transport.connections), 1)
-        finally:
-            release.set()
-        self.wait_until(lambda: self.mon.status()['index_downloads_this_session'] == 1)
-        self.assertTrue(self.mon.stop())
-        self.assertEqual(len(self.transport.connections), 2)
-        status = self.mon.status()
-        self.assertEqual(status['cancelled_requests_this_session'], 1)
-        self.assertEqual(status['failed_requests_this_session'], 0)
-        self.assertEqual(status['successful_requests_this_session'], 1)
+            self.assertEqual(again.status()['known_exact_boards'],1)
+            self.assertEqual(again.status()['network_requests_this_session'],0)
+            self.assertEqual(again.status()['archive']['phase'],'idle')
+        finally:again.close()
 
-
-if __name__ == '__main__':
-    unittest.main()
+if __name__=='__main__':unittest.main(verbosity=2)

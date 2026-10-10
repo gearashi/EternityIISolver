@@ -8,7 +8,7 @@ An additional **Hybrid GPU hints + DFS** option is experimental. It samples on t
 
 CPU exact search is standalone and offline. It is not a BOINC replacement worker, does not consume production ticket assignments, and earns no BOINC credit. The separate GPU mode remains a heuristic board-repair search.
 
-Starting in v0.2.1, the dashboard can independently download public library data when its **Library downloads** checkbox is enabled; fresh installs leave it off. Search workers still make no external requests and send no progress, results, node/work counts, or telemetry. This optional downloader does not change the search algorithms or measurements below. Versions v0.1.1 and v0.2.0 disabled runtime library downloads.
+In v0.2.2, the dashboard's **Download and merge** button requests one full public library archive, validates it, and merges new arrangements into the local cache. There are no automatic downloads, per-board requests, or scheduled refreshes; the old v0.2.1 download setting is ignored. Search workers make no external requests and send no progress, results, node/work counts, or telemetry. The archive workflow does not change the search algorithms or measurements below.
 
 ## Engines
 
@@ -85,7 +85,7 @@ Use `EternityIISolver.exe` on Windows or the platform's executable path. In a so
 
 `start` opens the local dashboard and starts a worker. `run` and `exact` run in the foreground. `--seconds` bounds a run; without it, the exact worker continues until a solution, exhaustion of its search scope, a stop request, or an error. Closing the browser leaves the worker running. Stop requests a cooperative stop; it may take time to finish the current operation and write local state.
 
-Library downloads have their own checkbox and continue independently while the local dashboard server runs, including after search Stop or closing the browser tab. Disable that checkbox to stop further downloads; the current GET may finish. The downloader checks the public index every 15 minutes and requests missing public arrangements at least 1 second apart, reusing cached content. Its fixed-endpoint GET requests carry no uploads or solver metrics, though the server can log the requests, IP address, and user-agent. See [library-download behavior](../README.md#saved-state-and-library-downloads) for the network boundary.
+Library archive imports are manual and independent of search Start/Stop. **Download and merge** requests the fixed public archive with one GET, then validates and merges it locally. Download and validation can take minutes and can be cancelled before the final atomic merge. Existing cache entries remain available; duplicates are skipped, and originals/backups are retained locally. Closing the browser does not cancel a requested import while the local server runs. The request carries no uploads or solver metrics, though the server can log the request, IP address, and user-agent. See [library-download behavior](../README.md#saved-state-and-library-downloads) for the network boundary.
 
 The state directory retains the saved best board, exports, cache, GPU repair checkpoints, ordinary DFS checkpoints, and separate hybrid hints/frontiers when switching methods. DFS resumes a compatible saved frontier. Hybrid reuses its frozen hints and compatible frontier. SAT and CP-SAT preserve run status but do not serialize their native search state; their next run starts again. Checkpoints are local recovery files. Exhaustion of a restored frontier is not an independent unsatisfiability certificate, particularly if a checkpoint has been edited or replaced.
 
@@ -102,7 +102,7 @@ For hybrid, `EternityIISolver exact --engine hybrid --fresh-exact --backend auto
 - **Timeout** or **stopped** is inconclusive. It never means the puzzle is impossible.
 - **Infeasible** means a completed exact search ruled out its specified task, subject to the solver and input assumptions. No portable UNSAT proof certificate is produced. A regional task or resumed frontier cannot establish whole-puzzle impossibility.
 
-The dashboard's Export best board control still saves local candidate files for manual review. Neither the search workers nor the library downloader uploads them or changes the project's submission requirements. Current duplicate checks use the shared cache; historical “not found” labels describe the snapshot at check time and do not establish worldwide novelty.
+The dashboard's Export best board control still saves local candidate files for manual review. Neither the search workers nor the archive manager uploads them or changes the project's submission requirements. Current duplicate checks use the shared cache; historical “not found” labels describe the snapshot at check time. Even a fully imported archive does not prove globally complete index coverage or worldwide novelty.
 
 ## Bounded comparison and reproducibility
 

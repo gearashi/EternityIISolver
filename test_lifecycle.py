@@ -492,12 +492,17 @@ class PersistentDashboardTests(TemporaryStateTest):
         }), encoding='utf-8')
         _, status = self.request('/status')
         self.assertIsNone(status['external_network_enabled'])
-        self.assertIsNone(status['library']['network_enabled'])
-        self.assertEqual(status['library']['mode'], 'legacy-unverified')
-        self.assertEqual(status['library']['network_requests_this_session'], 85)
+        self.assertIsNone(status['solver_network_enabled'])
+        self.assertIsNone(status['uploads_enabled'])
+        # Library status belongs to the new offline archive manager, while the
+        # separate worker's network behavior remains explicitly unverified.
+        self.assertFalse(status['library']['network_enabled'])
+        self.assertEqual(status['library']['mode'], 'manual-archive')
+        self.assertEqual(status['library']['network_requests_this_session'], 0)
+        self.assertEqual(status['library']['archive']['phase'], 'idle')
         self.assertIn('older worker', status['legacy_worker_warning'])
 
-    def test_dashboard_marks_legacy_library_status_offline(self):
+    def test_dashboard_reads_current_cache_instead_of_stale_worker_library_status(self):
         (self.home / 'runtime' / 'status.json').write_text(json.dumps({
             'state':'stopped', 'pid':0,
             'library':{'running':True, 'network_requests_this_session':85, 'cached_geometries':12000},
@@ -506,10 +511,11 @@ class PersistentDashboardTests(TemporaryStateTest):
         self.assertFalse(status['external_network_enabled'])
         self.assertFalse(status['library']['network_enabled'])
         self.assertFalse(status['library']['running'])
-        self.assertEqual(status['library']['mode'], 'offline')
-        self.assertEqual(status['library']['previous_run_network_requests'], 85)
+        self.assertEqual(status['library']['mode'], 'manual-archive')
         self.assertEqual(status['library']['network_requests_this_session'], 0)
-        self.assertEqual(status['library']['cached_geometries'], 12000)
+        self.assertEqual(status['library']['cached_geometries'], 0)
+        self.assertEqual(status['library']['known_exact_boards'], 0)
+        self.assertTrue(status['archive_can_start'])
 
     def test_concurrent_start_is_single_worker_and_stop_keeps_dashboard_alive(self):
         settings = {'replicas': 512, 'backend': 'opencl', 'seed': 123, 'no_library': True, 'seconds': 0}

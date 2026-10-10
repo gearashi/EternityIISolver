@@ -13,7 +13,7 @@ import webbrowser
 from app_paths import resource_root, state_root
 from process_control import read_status
 
-VERSION = '0.2.1'
+VERSION = '0.2.2'
 
 
 class _NoLocalRedirect(urllib.request.HTTPRedirectHandler):
@@ -46,7 +46,7 @@ def parser():
             command.add_argument('--replicas', type=int, default=4096)
             command.add_argument('--seed', type=int, default=20261007)
             command.add_argument('--seconds', type=float, help='Bounded run; otherwise continues until stopped')
-            command.add_argument('--no-library', action='store_true', help='Skip solver cache checks; dashboard library downloads have a separate control')
+            command.add_argument('--no-library', action='store_true', help='Skip solver cache checks; archive downloads require the dashboard button')
             command.add_argument('--port', type=int, default=8765)
         if name in ('open', 'serve'):
             command.add_argument('--port', type=int, default=8765)

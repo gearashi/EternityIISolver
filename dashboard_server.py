@@ -110,7 +110,6 @@ class DashboardServer(ThreadingHTTPServer):
         self.library_factory = library_factory
         self.library = None
         self.library_error = None
-        self.library_downloads_enabled = False
         self.worker = None
         self.worker_status_before = None
         self.mutex = threading.RLock()
@@ -129,17 +128,9 @@ class DashboardServer(ThreadingHTTPServer):
             self.port = self.server_address[1]
             self.save_identity('running')
             self.identity_published = True
-            config = self.runtime / 'library-downloads.json'
-            if config.is_file():
-                try:
-                    value = json.loads(config.read_text(encoding='utf-8'))
-                    if set(value) != {'enabled'} or type(value['enabled']) is not bool:
-                        raise ValueError('Invalid library download setting')
-                    self.library_downloads_enabled = value['enabled']
-                    self._configure_library()
-                except (OSError, ValueError, TypeError):
-                    self.library_error = 'Could not load the library download setting; downloads remain disabled.'
-                    self.library_downloads_enabled = False
+            # Construction reads the local cache only. Historical opt-in files
+            # are deliberately ignored: every archive transfer needs a click.
+            self._initialize_library()
         except BaseException:
             if hasattr(self, 'socket'):
                 self.socket.close()
@@ -156,30 +147,31 @@ class DashboardServer(ThreadingHTTPServer):
     def save_identity(self, state):
         atomic_json(self.runtime / 'dashboard.json', {'state': state, 'pid': os.getpid(), 'port': self.port})
 
-    def _configure_library(self):
+    def _initialize_library(self):
         try:
-            if self.library is None and self.library_downloads_enabled:
-                from library_download import LibraryDownloader
-                factory = self.library_factory or LibraryDownloader
+            if self.library is None:
+                factory = self.library_factory
+                if factory is None:
+                    from library_download import LibraryArchiveManager
+                    factory = LibraryArchiveManager
                 self.library = factory(self.home / 'library', pieces_path=self.resources / 'data/pieces.txt')
-            if self.library is not None:
-                if self.library_downloads_enabled:
-                    self.library.start()
-                else:
-                    self.library.stop(timeout=0)
             self.library_error = None
         except Exception as exc:
             # A cache/download failure must not prevent local puzzle search.
-            self.library_error = f'Library downloader unavailable: {exc}'
+            self.library_error = f'Library archive unavailable: {exc}'
 
-    def set_library_downloads(self, value):
-        if not isinstance(value, dict) or set(value) != {'enabled'} or type(value['enabled']) is not bool:
-            raise ValueError('Expected only a boolean enabled setting')
+    def request_library_archive(self, value, *, cancel=False):
+        if not isinstance(value, dict) or value:
+            raise ValueError('Archive actions expect an empty JSON object')
         with self.mutex:
-            atomic_json(self.runtime / 'library-downloads.json', value)
-            self.library_downloads_enabled = value['enabled']
-            self._configure_library()
-            return self.status()
+            if self.library is None:
+                self._initialize_library()
+            accepted = False
+            if self.library is not None:
+                accepted = bool(self.library.cancel() if cancel else self.library.start_download())
+            status = self.status()
+            status['archive_request_accepted'] = accepted
+            return status, accepted
 
     def status(self):
         with self.mutex:
@@ -240,14 +232,18 @@ class DashboardServer(ThreadingHTTPServer):
                 library.update(mode='offline', network_enabled=False, running=False,
                                online_freshness_verified=False, network_requests_this_session=0,
                                detail_downloads_this_session=0)
-            saved['library_downloads_enabled'] = self.library_downloads_enabled
+            saved.pop('library_downloads_enabled', None)
             saved['solver_network_enabled'] = None if legacy_active else False
             saved['uploads_enabled'] = None if legacy_active else False
             saved['progress_reporting_enabled'] = None if legacy_active else False
             if self.library is not None:
                 library = self.library.status()
             if self.library_error:
-                library = dict(library, last_error=self.library_error)
+                library = dict(library, last_error=self.library_error,
+                               archive={'phase': 'error', 'running': False, 'error': self.library_error},
+                               archive_can_start=False, archive_can_cancel=False)
+            saved['archive_can_start'] = library.get('archive_can_start') is True
+            saved['archive_can_cancel'] = library.get('archive_can_cancel') is True
             if not legacy_active:
                 saved['external_network_enabled'] = bool(library.get('network_enabled'))
             saved['library'] = library
@@ -385,7 +381,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.local_request():
             return
-        if self.path not in ('/start', '/stop', '/export-best', '/library-downloads'):
+        if self.path not in ('/start', '/stop', '/export-best', '/library-archive', '/library-archive/cancel'):
             self.send_payload({'error': 'Unknown endpoint'}, 404)
             return
         if self.headers.get_content_type() != 'application/json':
@@ -408,8 +404,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if self.path == '/start':
                 status, started = self.server.start_worker(value)
                 self.send_payload(status, 202 if started else 200)
-            elif self.path == '/library-downloads':
-                self.send_payload(self.server.set_library_downloads(value))
+            elif self.path in ('/library-archive', '/library-archive/cancel'):
+                status, accepted = self.server.request_library_archive(value, cancel=self.path.endswith('/cancel'))
+                self.send_payload(status, 202 if accepted else 409)
             elif self.path == '/export-best':
                 if value:
                     raise ValueError('Export expects an empty JSON object')
