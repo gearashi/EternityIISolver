@@ -64,9 +64,10 @@ class AssumptionSession:
     query. An interrupted *encoding* is discarded and may be rebuilt if the
     total budget remains. Completed base models are never rebuilt.
 
-    Use a context manager or call close(). Queries are serialized. During a
-    query, close() requests cancellation and returns immediately, even inside
-    a callback; query cleanup then deletes the solver after its monitor exits.
+    Use a context manager or call close(). Concurrent or reentrant queries are
+    rejected immediately. During a query, close() requests cancellation and
+    returns immediately, even inside a callback; query cleanup then deletes
+    the solver after its monitor exits.
     Callback time and selector preparation count against budgets.
     Glucose uses one worker. Seed sets initial placement phases only.
     """
@@ -288,7 +289,13 @@ class AssumptionSession:
         assumptions = self._assumptions(assumptions)
         if seconds is not None:
             seconds = _seconds(seconds)
-        with self._lock:
+        # The interrupt monitor can itself invoke a user callback. Waiting here
+        # would deadlock if that callback requested another solve while the
+        # active query was waiting to join its monitor. Same-thread reentry is
+        # rejected by the lifecycle check below after this RLock is acquired.
+        if not self._lock.acquire(blocking=False):
+            raise RuntimeError('SAT session query is already active')
+        try:
             with self._lifecycle_lock:
                 if self.closed or self._closing.is_set():
                     raise RuntimeError('SAT session is closed')
@@ -302,6 +309,8 @@ class AssumptionSession:
                     self._active_query = False
                     if self._closing.is_set():
                         self._dispose()
+        finally:
+            self._lock.release()
 
     def _solve_locked(self, assumptions, seconds):
         self._query_outcome = None

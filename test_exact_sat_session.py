@@ -259,6 +259,60 @@ class AssumptionSessionTests(unittest.TestCase):
         self.assertIsNone(session.native)
         self.assertFalse(any(t.name == 'eternity-sat-interrupt' for t in threading.enumerate()))
 
+    def test_monitor_reentrant_solve_is_rejected_without_deadlock(self):
+        entered, attempted = threading.Event(), threading.Event()
+        answers, failures = [], []
+        session = None
+        def try_reentrant_query():
+            if entered.is_set() and threading.current_thread().name == 'eternity-sat-interrupt':
+                try:
+                    with self.assertRaisesRegex(RuntimeError, 'query is already active'):
+                        session.solve({})
+                finally:
+                    attempted.set()
+            return False
+        session = exact_sat.AssumptionSession(tiny_problem(), seconds=2, should_stop=try_reentrant_query)
+        session.solve({})
+        native = session.native
+        def waiting(**kwargs):
+            entered.set()
+            self.assertTrue(attempted.wait(.5), 'Monitor query blocked on the active query lock')
+            return None
+        def query():
+            try:
+                answers.append(session.solve({}))
+            except BaseException as exc:
+                failures.append(exc)
+        with patch.object(native, 'solve_limited', side_effect=waiting):
+            worker = threading.Thread(target=query, daemon=True)
+            worker.start()
+            worker.join(1)
+            self.assertFalse(worker.is_alive(), 'Reentrant solve deadlocked the native monitor')
+        self.assertTrue(attempted.is_set())
+        self.assertEqual(failures, [])
+        self.assertEqual(answers[0]['outcome'], 'timeout')
+        self.assertIsNone(answers[0]['core_cells'])
+        self.assertEqual(session.queries, 2, 'Rejected query must not change query counters')
+        entered.clear()
+        self.assertEqual(session.solve({})['outcome'], 'solved')
+        session.close()
+        self.assertFalse(any(t.name == 'eternity-sat-interrupt' for t in threading.enumerate()))
+
+    def test_progress_reentrant_solve_is_rejected_without_changing_outer_query(self):
+        called = []
+        session = None
+        def reenter(update):
+            with self.assertRaisesRegex(RuntimeError, 'query is already active'):
+                session.solve({})
+            called.append(update['phase'])
+        with exact_sat.AssumptionSession(tiny_problem(), seconds=2, on_progress=reenter) as session:
+            result = session.solve({})
+            self.assertEqual(result['outcome'], 'solved')
+            self.assertEqual(called, ['encoding', 'searching'])
+            self.assertEqual(session.queries, 1)
+            session.on_progress = None
+            self.assertEqual(session.solve({})['outcome'], 'solved')
+
     def test_progress_callback_close_is_deferred_until_callback_returns(self):
         for phase in ('encoding', 'searching'):
             called = []
