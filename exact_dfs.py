@@ -16,10 +16,42 @@ import time
 
 from exact_model import check_solution, constraint_edges, problem_hash
 
-CHECKPOINT_VERSION = 2
-ORDERING_VERSION = 'mrv-degree-lcv-hint-v1'
+CHECKPOINT_VERSION = 3
+ORDERING_VERSION = 'mrv-degree-lcv-hint-partitions-v2'
 MAX_CHECKPOINT_BYTES = 2 * 1024 * 1024
-_COUNTERS = ('branches', 'conflicts', 'propagations', 'max_depth', 'matching_checks', 'matching_failures')
+_COUNTERS = ('branches', 'conflicts', 'propagations', 'max_depth', 'matching_checks', 'matching_failures',
+             'gac_checks', 'gac_removed', 'independent_checks', 'independent_completions',
+             'probe_checks', 'probe_rejections', 'cell_branches', 'piece_branches', 'edge_branches')
+DEFAULT_OPTIONS = dict(gac=False, independent_completion=False, dual_branch=False,
+                       edge_branch=False, probe=False, probe_max_candidates=8,
+                       probe_max_domain=8, probe_max_depth=8, extra_rules=None)
+
+
+def normalize_options(options=None):
+    """Strict, deterministic settings; absence retains the original baseline."""
+    if options is None:
+        options = {}
+    if not isinstance(options, dict) or set(options) - set(DEFAULT_OPTIONS):
+        raise ValueError('Unknown DFS options or invalid options object')
+    result = dict(DEFAULT_OPTIONS, **options)
+    for key in ('gac', 'independent_completion', 'dual_branch', 'edge_branch', 'probe'):
+        if type(result[key]) is not bool:
+            raise ValueError('DFS option %s must be boolean' % key)
+    for key, lower, upper in (('probe_max_candidates', 1, 64), ('probe_max_domain', 2, 64),
+                              ('probe_max_depth', 0, 1024)):
+        if type(result[key]) is not int or not lower <= result[key] <= upper:
+            raise ValueError('DFS option %s is out of range' % key)
+    if result['extra_rules'] is not None:
+        from exact_rules import normalize_options as normalize_rules
+        result['extra_rules'] = normalize_rules(result['extra_rules'])
+    return result
+
+
+def _bits(mask):
+    while mask:
+        flag = mask & -mask
+        yield flag.bit_length() - 1
+        mask ^= flag
 
 
 def _seal(value):
@@ -46,28 +78,30 @@ def _hint_data(hints, n):
     return tuple(boards), hashlib.sha256(raw).hexdigest()
 
 
-def _checked_checkpoint(value, identity, seed, n, hint_identity):
+def _checked_checkpoint(value, identity, seed, n, hint_identity, options_identity):
     """Bounded data validation; the checksum detects corruption, not forgery."""
-    keys = {'version', 'ordering_version', 'problem_hash', 'hint_hash', 'seed', 'stack', 'rng_state', 'counters', 'checksum'}
+    keys = {'version', 'ordering_version', 'problem_hash', 'hint_hash', 'options_hash', 'seed', 'stack', 'rng_state', 'counters', 'checksum'}
     if not isinstance(value, dict):
         raise ValueError('Invalid DFS checkpoint fields')
     if type(value.get('version')) is not int or value['version'] != CHECKPOINT_VERSION:
-        raise ValueError('Unsupported DFS checkpoint version')
+        raise ValueError('Unsupported DFS checkpoint version; preserve this file and use the matching solver version, or explicitly start fresh')
     if set(value) != keys:
         raise ValueError('Invalid DFS checkpoint fields')
     if value['ordering_version'] != ORDERING_VERSION:
         raise ValueError('DFS checkpoint ordering version mismatch')
     if value['hint_hash'] != hint_identity:
         raise ValueError('DFS checkpoint hint hash mismatch')
+    if value['options_hash'] != options_identity:
+        raise ValueError('DFS checkpoint options hash mismatch')
     if value['problem_hash'] != identity or type(value['seed']) is not int or value['seed'] != seed:
         raise ValueError('DFS checkpoint problem or seed mismatch')
     counters = value['counters']
     if not isinstance(counters, dict) or set(counters) != set(_COUNTERS):
         raise ValueError('Invalid DFS checkpoint counters')
-    if any(type(v) is not int or not 0 <= v < 2**63 for v in counters.values()) or counters['max_depth'] > n:
+    if any(type(v) is not int or not 0 <= v < 2**63 for v in counters.values()) or counters['max_depth'] > 4 * n:
         raise ValueError('DFS checkpoint counters out of range')
     stack = value['stack']
-    if not isinstance(stack, list) or not 1 <= len(stack) <= n + 1:
+    if not isinstance(stack, list) or not 1 <= len(stack) <= 4 * n + 1:
         raise ValueError('Invalid DFS checkpoint depth')
     candidate_count = 0
     for index, frame in enumerate(stack):
@@ -77,21 +111,25 @@ def _checked_checkpoint(value, identity, seed, n, hint_identity):
             if set(frame) != {'phase'} or index != len(stack) - 1:
                 raise ValueError('Only the final DFS frame may be pending')
             continue
-        if set(frame) != {'phase', 'cell', 'candidates', 'next'} or frame['phase'] != 'branch':
+        if set(frame) != {'phase', 'kind', 'cell', 'candidates', 'next'} or frame['phase'] != 'branch':
             raise ValueError('Invalid DFS branch frame')
+        if frame['kind'] not in ('cell', 'piece', 'edge'):
+            raise ValueError('Invalid DFS branch kind')
         choices = frame['candidates']
-        if type(frame['cell']) is not int or not 0 <= frame['cell'] < n:
+        bound = 2 * n if frame['kind'] == 'edge' else n
+        if type(frame['cell']) is not int or not 0 <= frame['cell'] < bound:
             raise ValueError('Invalid DFS branch cell')
-        if not isinstance(choices, list) or not 2 <= len(choices) <= 4 * n:
+        choice_bound = 256 if frame['kind'] == 'edge' else (n if frame['kind'] == 'piece' else 4 * n)
+        if not isinstance(choices, list) or not 2 <= len(choices) <= choice_bound:
             raise ValueError('Invalid DFS branch candidates')
-        if any(type(s) is not int or not 0 <= s < 4 * n for s in choices) or len(set(choices)) != len(choices):
+        if any(type(s) is not int or not 0 <= s < choice_bound for s in choices) or len(set(choices)) != len(choices):
             raise ValueError('Invalid or repeated DFS branch state')
         if type(frame['next']) is not int or not 0 <= frame['next'] <= len(choices):
             raise ValueError('Invalid DFS branch cursor')
         if index < len(stack) - 1 and frame['next'] == 0:
             raise ValueError('DFS ancestor has no active child')
         candidate_count += len(choices)
-    if candidate_count > 2 * n * (n + 1):
+    if candidate_count > 16 * n * n + 512 * n:
         raise ValueError('DFS checkpoint candidate count exceeds its bound')
     rng = value['rng_state']
     if not isinstance(rng, list) or len(rng) != 3 or type(rng[0]) is not int or rng[0] != 3 or rng[2] is not None:
@@ -115,7 +153,7 @@ class _Interrupted(Exception):
 
 
 class _Search:
-    def __init__(self, problem, seconds, seed, should_stop, on_progress, checkpoint, on_checkpoint, checkpoint_interval, hints=None):
+    def __init__(self, problem, seconds, seed, should_stop, on_progress, checkpoint, on_checkpoint, checkpoint_interval, hints=None, options=None):
         self.problem = problem
         self.started = time.perf_counter()
         self.deadline = self.started + seconds
@@ -126,8 +164,17 @@ class _Search:
         self.last_progress = self.started
         self.last_checkpoint = self.started
         self.build_seconds = None
-        self.branches = self.conflicts = self.propagations = self.max_depth = 0
-        self.matching_checks = self.matching_failures = 0
+        for key in _COUNTERS:
+            setattr(self, key, 0)
+        self.options = normalize_options(options)
+        self.rules_version = None
+        if self.options['extra_rules'] is not None:
+            from exact_rules import RULES_VERSION
+            self.rules_version = RULES_VERSION
+        raw_options = json.dumps({'options': self.options, 'rules_version': self.rules_version},
+                                 sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('ascii')
+        self.options_hash = hashlib.sha256(raw_options).hexdigest()
+        self.rules = None
         self.rng = random.Random(seed)
         self.seed = seed
         self.size = problem.size
@@ -146,13 +193,14 @@ class _Search:
         self.stack = []
         self.restoring = False
         self.restore_complete = checkpoint is None
-        self.input_checkpoint = None if checkpoint is None else _checked_checkpoint(checkpoint, self.identity, seed, self.n, self.hint_hash)
+        self.input_checkpoint = None if checkpoint is None else _checked_checkpoint(checkpoint, self.identity, seed, self.n, self.hint_hash, self.options_hash)
         if self.input_checkpoint is not None:
             for key, value in self.input_checkpoint['counters'].items():
                 setattr(self, key, value)
 
     def report(self):
         return {
+            **{key: getattr(self, key) for key in _COUNTERS},
             'backend': 'dfs-python', 'branches': self.branches,
             'conflicts': self.conflicts, 'propagations': self.propagations,
             'matching_checks': self.matching_checks, 'matching_failures': self.matching_failures,
@@ -161,6 +209,11 @@ class _Search:
             'build_seconds': self.build_seconds,
             'hint_count': self.hint_count, 'hint_hash': self.hint_hash,
             'ordering_version': ORDERING_VERSION,
+            'options': json.loads(json.dumps(self.options)), 'options_hash': self.options_hash,
+            'rules_version': self.rules_version,
+            # Rule counters describe this invocation, including reconstruction
+            # and speculative probes; only the explicit DFS counters resume.
+            'rule_counters_session': {} if self.rules is None else dict(self.rules.counters),
         }
 
     def check(self):
@@ -194,7 +247,8 @@ class _Search:
             for side, color in enumerate(face):
                 self.colors[side][color] = self.colors[side].get(color, 0) | (1 << state)
         self.neighbors = [[] for _ in range(self.n)]
-        for a, b, side_a, side_b in constraint_edges(self.problem):
+        self.edges = tuple(constraint_edges(self.problem))
+        for a, b, side_a, side_b in self.edges:
             self.neighbors[a].append((b, side_a, side_b))
             self.neighbors[b].append((a, side_b, side_a))
         supplied = self.problem.domains
@@ -221,6 +275,9 @@ class _Search:
                     raise ValueError('Invalid fixed state')
                 domain &= 1 << state
             domains.append(domain)
+        if self.options['extra_rules'] is not None:
+            from exact_rules import AdditionalRules
+            self.rules = AdditionalRules(self.problem, check=self.check, options=self.options['extra_rules'])
         self.build_seconds = time.perf_counter() - self.started
         return domains
 
@@ -233,12 +290,13 @@ class _Search:
                 frames.append({'phase': 'pending'})
             else:
                 frames.append({key: frame[key] if key != 'candidates' else frame[key].copy()
-                               for key in ('phase', 'cell', 'candidates', 'next')})
+                               for key in ('phase', 'kind', 'cell', 'candidates', 'next')})
         if not frames:
             frames = [{'phase': 'pending'}]
         rng = self.committed_rng
         return _seal({'version': CHECKPOINT_VERSION, 'ordering_version': ORDERING_VERSION,
                       'problem_hash': self.identity, 'hint_hash': self.hint_hash,
+                      'options_hash': self.options_hash,
                       'seed': self.seed, 'stack': frames,
                       'rng_state': [rng[0], list(rng[1]), rng[2]],
                       'counters': {key: getattr(self, key) for key in _COUNTERS}})
@@ -266,22 +324,19 @@ class _Search:
                     frames.append(self.pending(domains.copy(), dirty, previous))
                     break
                 current = domains.copy()
-                matching = self.propagate(current, dirty, previous)
+                matching = self.prepare(current, dirty, previous, index)
                 if matching is None:
                     raise ValueError('DFS checkpoint contains an impossible branch')
-                cell = description['cell']
-                mask = 0
-                for state in description['candidates']:
-                    mask |= 1 << state
-                if mask != current[cell] or current[cell] & (current[cell] - 1) == 0:
+                kind, target = description['kind'], description['cell']
+                choices = self.partition_choices(current, kind, target)
+                if set(description['candidates']) != set(choices) or len(choices) < 2:
                     raise ValueError('DFS checkpoint branch does not partition its domain')
                 frame = dict(description, candidates=description['candidates'].copy(), domains=current, matching=matching)
                 frames.append(frame)
                 if index < len(self.input_checkpoint['stack']) - 1:
-                    state = description['candidates'][description['next'] - 1]
-                    domains = current.copy()
-                    domains[cell] = 1 << state
-                    dirty, previous = (cell,), matching
+                    choice = description['candidates'][description['next'] - 1]
+                    domains, dirty = self.apply_choice(current, kind, target, choice)
+                    previous = matching
             rng = self.input_checkpoint['rng_state']
             self.committed_rng = (rng[0], tuple(rng[1]), rng[2])
             self.rng.setstate(self.committed_rng)
@@ -361,6 +416,99 @@ class _Search:
                 return None
         return matched
 
+    def valid_matching(self, domains, matched):
+        """Ablation hooks may return placeholders rather than a matching."""
+        return (isinstance(matched, (list, tuple)) and len(matched) == self.n
+                and all(type(p) is int and 0 <= p < self.n for p in matched)
+                and len(set(matched)) == self.n
+                and all(domains[c] & (15 << (4 * p)) for c, p in enumerate(matched)))
+
+    def filter_matching(self, domains, matched):
+        """Delete precisely the cell/piece edges outside all perfect matchings.
+
+        Orient matched edges piece->cell and other edges cell->piece. In this
+        balanced graph every perfect matching covers every vertex. An unmatched
+        edge belongs to another perfect matching iff it is on an alternating
+        cycle, equivalently its endpoints share a strongly connected component.
+        Rotations remain together: all-different constrains physical pieces.
+        """
+        if not self.valid_matching(domains, matched):
+            return set()
+        self.gac_checks += 1
+        graph, reverse = [[] for _ in range(2 * self.n)], [[] for _ in range(2 * self.n)]
+        for cell, domain in enumerate(domains):
+            self.check()
+            for bit in _bits(self.pieces(domain)):
+                piece = bit // 4
+                a, b = (self.n + piece, cell) if matched[cell] == piece else (cell, self.n + piece)
+                graph[a].append(b)
+                reverse[b].append(a)
+        # Iterative Kosaraju avoids a Python recursion-depth dependency.
+        seen, order = set(), []
+        for root in range(2 * self.n):
+            if root in seen:
+                continue
+            seen.add(root)
+            stack = [(root, 0)]
+            while stack:
+                self.check()
+                node, cursor = stack[-1]
+                if cursor == len(graph[node]):
+                    order.append(node)
+                    stack.pop()
+                else:
+                    other = graph[node][cursor]
+                    stack[-1] = (node, cursor + 1)
+                    if other not in seen:
+                        seen.add(other)
+                        stack.append((other, 0))
+        component = [-1] * (2 * self.n)
+        for root in reversed(order):
+            if component[root] >= 0:
+                continue
+            component[root] = root
+            stack = [root]
+            while stack:
+                self.check()
+                node = stack.pop()
+                for other in reverse[node]:
+                    if component[other] < 0:
+                        component[other] = root
+                        stack.append(other)
+        changed = set()
+        for cell, domain in enumerate(domains):
+            self.check()
+            for bit in _bits(self.pieces(domain)):
+                piece = bit // 4
+                if matched[cell] != piece and component[cell] != component[self.n + piece]:
+                    domains[cell] &= ~(15 << (4 * piece))
+                    self.gac_removed += 1
+                    changed.add(cell)
+        return changed
+
+    def independent_completion(self, domains, matched):
+        """Complete independent undecided cells exactly, without branching.
+
+        Arc consistency has already checked all edges to singleton neighbors.
+        If no required edge joins two undecided cells, any remaining rotation
+        of the matched physical piece therefore satisfies every required edge.
+        """
+        self.independent_checks += 1
+        if not self.valid_matching(domains, matched):
+            return None
+        undecided = {cell for cell, domain in enumerate(domains) if domain & (domain - 1)}
+        if any(a in undecided and b in undecided for a, b, _, _ in self.edges):
+            return None
+        board = []
+        for cell, domain in enumerate(domains):
+            self.check()
+            choices = domain & (15 << (4 * matched[cell]))
+            board.append((choices & -choices).bit_length() - 1)
+        if not check_solution(self.problem, board):
+            raise AssertionError('Independent completion failed exact-model validation')
+        self.independent_completions += 1
+        return board
+
     def propagate(self, domains, dirty, previous):
         queue = deque(dirty)
         queued = set(dirty)
@@ -413,7 +561,81 @@ class _Search:
                     if not reduce(cell, domains[cell] & (required * 15)):
                         return None
             if not queue:
-                return self.matching(domains, previous)
+                if self.rules is not None:
+                    ok, changed = self.rules.apply(domains)
+                    if not ok:
+                        return None
+                    if changed:
+                        self.propagations += len(changed)
+                        queue.extend(sorted(changed))
+                        queued.update(changed)
+                        continue
+                matched = self.matching(domains, previous)
+                if matched is None:
+                    return None
+                if self.options['gac']:
+                    changed = self.filter_matching(domains, matched)
+                    if changed:
+                        self.propagations += len(changed)
+                        queue.extend(sorted(changed))
+                        queued.update(changed)
+                        previous = matched
+                        continue
+                return matched
+
+    def prepare(self, domains, dirty, previous, depth):
+        matched = self.propagate(domains, dirty, previous)
+        if matched is None or not self.options['probe'] or depth > self.options['probe_max_depth']:
+            return matched
+        eligible = [c for c, d in enumerate(domains) if 2 <= d.bit_count() <= self.options['probe_max_domain']]
+        if not eligible:
+            return matched
+        cell = min(eligible, key=lambda c: (domains[c].bit_count(), self.tie_order[c]))
+        # Deterministic work cap, never a wall-clock decision or global history
+        # gate. Interrupted probes retain the complete original pending node.
+        candidates = list(_bits(domains[cell]))[:self.options['probe_max_candidates']]
+        rejected = 0
+        for state in candidates:
+            self.check()
+            trial = domains.copy()
+            trial[cell] = 1 << state
+            self.probe_checks += 1
+            if self.propagate(trial, (cell,), matched) is None:
+                rejected |= 1 << state
+                self.probe_rejections += 1
+        if rejected:
+            domains[cell] &= ~rejected
+            self.propagations += 1
+            return self.propagate(domains, (cell,), matched)
+        return matched
+
+    def partition_choices(self, domains, kind, target):
+        if kind == 'cell':
+            return list(_bits(domains[target]))
+        if kind == 'piece':
+            if not self.options['dual_branch']:
+                raise ValueError('DFS checkpoint piece branching is disabled')
+            return [cell for cell, domain in enumerate(domains) if domain & (15 << (4 * target))]
+        if kind == 'edge':
+            if not self.options['edge_branch'] or not 0 <= target < len(self.edges):
+                raise ValueError('DFS checkpoint edge branching is disabled or invalid')
+            a, b, sa, sb = self.edges[target]
+            return sorted(color for color, mask in self.colors[sa].items()
+                          if domains[a] & mask and domains[b] & self.colors[sb].get(color, 0))
+        raise ValueError('Invalid DFS branch kind')
+
+    def apply_choice(self, domains, kind, target, choice):
+        child = domains.copy()
+        if kind == 'cell':
+            child[target] = 1 << choice
+            return child, (target,)
+        if kind == 'piece':
+            child[choice] &= 15 << (4 * target)
+            return child, (choice,)
+        a, b, sa, sb = self.edges[target]
+        child[a] &= self.colors[sa].get(choice, 0)
+        child[b] &= self.colors[sb].get(choice, 0)
+        return child, (a, b)
 
     def branch(self, domains):
         undecided = [cell for cell, domain in enumerate(domains) if domain & (domain - 1)]
@@ -439,6 +661,26 @@ class _Search:
             candidates.sort(key=value_support, reverse=True)
         return cell, candidates
 
+    def choose_partition(self, domains):
+        cell, candidates = self.branch(domains)
+        selected = ('cell', cell, candidates)
+        # Prefer fewer exhaustive alternatives; exact ties keep the original
+        # cell branch. Each piece location and each edge color can be fixed at
+        # most once along a path, so all three branch types have depth < 4*n.
+        if self.options['dual_branch']:
+            for piece in range(self.n):
+                self.check()
+                choices = self.partition_choices(domains, 'piece', piece)
+                if 2 <= len(choices) < len(selected[2]):
+                    selected = ('piece', piece, choices)
+        if self.options['edge_branch']:
+            for edge in range(len(self.edges)):
+                self.check()
+                choices = self.partition_choices(domains, 'edge', edge)
+                if 2 <= len(choices) < len(selected[2]):
+                    selected = ('edge', edge, choices)
+        return selected
+
     def visit(self, domains):
         if self.input_checkpoint is not None:
             self.restore(domains)
@@ -454,7 +696,7 @@ class _Search:
                 # retains the whole pending node and the pre-order RNG state.
                 current = frame['domains'].copy()
                 self.rng.setstate(self.committed_rng)
-                matching = self.propagate(current, frame['dirty'], frame['matching'])
+                matching = self.prepare(current, frame['dirty'], frame['matching'], depth)
                 if matching is None:
                     self.conflicts += 1
                     self.stack.pop()
@@ -464,25 +706,30 @@ class _Search:
                     if not check_solution(self.problem, board):
                         raise AssertionError('DFS candidate failed independent exact-model validation')
                     return board
-                cell, candidates = self.branch(current)
+                if self.options['independent_completion']:
+                    board = self.independent_completion(current, matching)
+                    if board is not None:
+                        return board
+                kind, cell, candidates = self.choose_partition(current)
                 self.committed_rng = self.rng.getstate()
                 frame = {'phase': 'branch', 'domains': current, 'matching': matching,
-                         'cell': cell, 'candidates': candidates, 'next': 0}
+                         'kind': kind, 'cell': cell, 'candidates': candidates, 'next': 0}
                 self.stack[-1] = frame
             if frame['next'] == len(frame['candidates']):
                 self.stack.pop()
                 continue
-            state = frame['candidates'][frame['next']]
+            choice = frame['candidates'][frame['next']]
             frame['next'] += 1
             self.branches += 1
-            child = frame['domains'].copy()
-            child[frame['cell']] = 1 << state
-            self.stack.append(self.pending(child, (frame['cell'],), frame['matching']))
+            key = frame['kind'] + '_branches'
+            setattr(self, key, getattr(self, key) + 1)
+            child, dirty = self.apply_choice(frame['domains'], frame['kind'], frame['cell'], choice)
+            self.stack.append(self.pending(child, dirty, frame['matching']))
         return None
 
 
 def solve(problem, seconds=10.0, seed=0, workers=1, should_stop=None, on_progress=None,
-          checkpoint=None, on_checkpoint=None, checkpoint_interval=5.0, hints=None):
+          checkpoint=None, on_checkpoint=None, checkpoint_interval=5.0, hints=None, options=None):
     """Solve exactly within a total build+search budget, without any I/O.
 
     A fresh ``infeasible`` result covers the entire supplied problem. After
@@ -496,8 +743,11 @@ def solve(problem, seconds=10.0, seed=0, workers=1, should_stop=None, on_progres
     Optional hints are at most 64 complete list/tuple boards of state integers.
     They need not be legal puzzle boards. Their votes break ties only after
     existing value-support ordering; no hint freezes or removes a candidate.
-    Checkpoint v2 binds the exact hint sequence and ordering version. A v1
-    checkpoint or a changed hint sequence is rejected rather than restarted.
+    All new pruning/branch options default off pending comparative benchmarks.
+    Checkpoint v3 binds the exact hints, normalized options, and ordering
+    version. Older checkpoints or changed settings are rejected; no file is
+    modified and no frontier is silently restarted. Additional-rule counters
+    describe the current invocation, including reconstruction and probes.
     """
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not math.isfinite(seconds) or seconds < 0:
         raise ValueError('seconds must be finite and nonnegative')
@@ -507,7 +757,7 @@ def solve(problem, seconds=10.0, seed=0, workers=1, should_stop=None, on_progres
         raise ValueError('seed must be a bounded integer')
     if isinstance(checkpoint_interval, bool) or not isinstance(checkpoint_interval, (int, float)) or not math.isfinite(checkpoint_interval) or checkpoint_interval < 0:
         raise ValueError('checkpoint_interval must be finite and nonnegative')
-    search = _Search(problem, seconds, seed, should_stop, on_progress, checkpoint, on_checkpoint, checkpoint_interval, hints)
+    search = _Search(problem, seconds, seed, should_stop, on_progress, checkpoint, on_checkpoint, checkpoint_interval, hints, options)
     board = None
     try:
         domains = search.build()

@@ -13,7 +13,7 @@ import webbrowser
 from app_paths import resource_root, state_root
 from process_control import read_status
 
-VERSION = '0.2.2'
+VERSION = '0.3.0.dev1'
 
 
 class _NoLocalRedirect(urllib.request.HTTPRedirectHandler):
@@ -40,8 +40,10 @@ def parser():
         command.add_argument('--state-dir', type=Path, help='Folder for checkpoints, cache, logs and results')
         if name in ('start', 'run'):
             command.add_argument('--method', choices=('gpu', 'exact'), default='gpu')
-            command.add_argument('--exact-engine', choices=('dfs', 'sat', 'cp-sat', 'hybrid'), default='dfs')
-            command.add_argument('--workers', type=int, default=1, help='Exact CPU workers (1; CP-SAT supports up to 4)')
+            command.add_argument('--exact-engine', choices=('dfs', 'sat', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned'), default='dfs')
+            command.add_argument('--workers', type=int, default=1, help='CPU workers (1; CP-SAT, optimization and partitioned DFS support up to 4)')
+            command.add_argument('--pruning', choices=('baseline', 'strong', 'full'), default='baseline')
+            command.add_argument('--fresh-exact', action='store_true', help='Archive the previous DFS frontier and explicitly restart')
             command.add_argument('--backend', choices=('auto', 'cuda', 'opencl'), default='auto')
             command.add_argument('--replicas', type=int, default=4096)
             command.add_argument('--seed', type=int, default=20261007)
@@ -72,7 +74,10 @@ def parser():
 def run_arguments(args):
     if getattr(args, 'method', 'gpu') == 'exact':
         result = ['--state-dir', str(state_root(args.state_dir)), '--engine', args.exact_engine,
-                  '--workers', str(args.workers), '--seed', str(args.seed), '--port', str(args.port)]
+                  '--workers', str(args.workers), '--seed', str(args.seed), '--port', str(args.port),
+                  '--pruning', args.pruning]
+        if args.fresh_exact:
+            result.append('--fresh-exact')
         if args.exact_engine == 'hybrid':
             result.extend(['--backend', args.backend, '--replicas', str(args.replicas)])
         if args.seconds is not None:
@@ -155,7 +160,8 @@ def start(args):
     home = state_root(args.state_dir)
     url = ensure_dashboard(home, args.port)
     payload = json.dumps({'method': args.method, 'exact_engine': args.exact_engine, 'workers': args.workers, 'replicas': args.replicas, 'backend': args.backend,
-                          'seed': args.seed, 'seconds': args.seconds, 'no_library': args.no_library}).encode()
+                          'seed': args.seed, 'seconds': args.seconds, 'no_library': args.no_library,
+                          'pruning': args.pruning, 'fresh_exact': args.fresh_exact}).encode()
     request = urllib.request.Request(url + 'start', data=payload,
                                      headers={'Content-Type': 'application/json'}, method='POST')
     with local_urlopen(request, timeout=10) as response:
@@ -243,4 +249,6 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
+    import multiprocessing
+    multiprocessing.freeze_support()
     raise SystemExit(main())

@@ -1,5 +1,7 @@
 # Offline CPU exact search
 
+The development build also offers **score optimization**, **core-guided repair**, **matching/cycle repair**, and **partitioned DFS**. See [Smart search](SMART_SEARCH.md) for their separate guarantees, controls and measurements. The direct DFS/SAT/CP-SAT descriptions below concern hard 480-edge search; score optimization and matching repair can save verified intermediate improvements.
+
 The dashboard's **CPU exact / hybrid** method looks for a complete solution to the original 16×16 puzzle with all five official clues in the application's canonical orientation. It enforces all 256 pieces exactly once, legal rotations, the gray frame, and all 480 internal edge matches. It does not promote partially matching intermediate assignments; the dashboard keeps displaying the independently validated saved best board until a full solution is found.
 
 Choose **DFS**, **SAT**, or **CP-SAT**, then Start. DFS is the recommended fallback when native constraint encoding costs too much time or memory. It is a pruned Python baseline, not an optimized native DFS implementation. No engine is established as universally fastest, and none has solved the whole puzzle in the bounded comparisons described below.

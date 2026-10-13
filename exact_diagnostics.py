@@ -18,7 +18,32 @@ def diagnose(engine='all', seconds=5):
         no=solve(impossible,seconds=seconds,workers=1,seed=11)
         if no['outcome']!='infeasible':raise RuntimeError(f'{name} failed the tiny infeasible case: {no["outcome"]}')
         results.append({'engine':name,'solvable_case_validated':True,'contradiction_detected':True,'elapsed_seconds':result['elapsed_seconds']+no['elapsed_seconds']})
+    if engine=='all': results.extend(diagnose_smart(seconds))
     return {'passed':True,'scope':'Tiny 3x3 CPU correctness cases; not a performance result or an Eternity II solution','results':results,'external_network_enabled':False}
+
+
+def diagnose_smart(seconds=5):
+    """Exercise every new dependency in a frozen process, including spawn."""
+    import exact_dfs,exact_optimize,exact_parallel,smart_repair
+    problem,known=generated_problem(3,5,101,1)
+    reference=list(known)
+    corners=[c for c in (0,2,6,8) if c not in problem.fixed]
+    a,b=corners[:2];pa,pb=reference[a]//4,reference[b]//4
+    reference[a]=next(s for s in problem.domains[a] if s//4==pb)
+    reference[b]=next(s for s in problem.domains[b] if s//4==pa)
+    results=[]
+    for name,run in (
+        ('strong-dfs',lambda:exact_dfs.solve(problem,seconds=seconds,options=dict(gac=True,independent_completion=True,dual_branch=True,edge_branch=True,extra_rules={}))),
+        ('partitioned',lambda:exact_parallel.solve(problem,seconds=seconds,workers=2)),
+        ('optimize',lambda:exact_optimize.optimize(problem,reference,seconds=seconds)),
+        ('core-repair',lambda:exact_optimize.core_guided_repair(problem,reference,seconds=seconds)),
+        ('matching',lambda:smart_repair.assignment_repair(problem,reference,corners)),
+    ):
+        result=run()
+        if not check_solution(problem,result.get('board')):
+            raise RuntimeError(name+' failed the tiny smart-search witness check')
+        results.append({'engine':name,'solvable_case_validated':True})
+    return results
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)

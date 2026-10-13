@@ -15,6 +15,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import sqlite3
 import struct
 import threading
 import time
@@ -29,7 +30,9 @@ from validator import load_bundle, validate_board
 MEMORY_SOFT_LIMIT_MB = 2048.0
 UNBOUNDED_SECONDS = 1.0e12  # Finite native API horizon, approximately 31,688 years.
 SCOPE = 'full-16x16-five-clue-puzzle-all-480-edges'
-ENGINES = ('dfs', 'sat', 'cp-sat', 'hybrid')
+ENGINES = ('dfs', 'sat', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned')
+REPAIR_ENGINES = ('optimize', 'core-repair', 'matching')
+PRUNING_PROFILES = ('baseline', 'strong', 'full')
 DEFAULT_SEED = 20261007
 
 
@@ -64,26 +67,54 @@ def _backend(engine):
         from exact_dfs import solve
     elif engine == 'sat':
         from exact_sat import solve
+    elif engine == 'optimize':
+        from exact_optimize import optimize as solve
+    elif engine == 'core-repair':
+        from exact_optimize import core_guided_repair as solve
+    elif engine == 'matching':
+        from smart_repair import solve
+    elif engine == 'partitioned':
+        from exact_parallel import solve
     else:
         from exact_cp import solve
     return solve
 
 
-def _settings(engine, seconds, seed, workers, port, backend='auto', replicas=4096):
+def _settings(engine, seconds, seed, workers, port, backend='auto', replicas=4096, pruning='baseline'):
     if engine not in ENGINES:
         raise ValueError('Unknown exact engine')
     if seconds is not None and (type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0):
         raise ValueError('seconds must be finite and nonnegative, or omitted')
     if type(seed) is not int or not 0 <= seed < 2**32:
         raise ValueError('seed must be a uint32 integer')
-    if type(workers) is not int or not 1 <= workers <= (4 if engine == 'cp-sat' else 1):
-        raise ValueError('DFS/SAT require one worker; CP-SAT permits one to four')
+    if type(workers) is not int or not 1 <= workers <= (4 if engine in ('cp-sat', 'optimize', 'partitioned') else 1):
+        raise ValueError('CP-SAT, optimization and partitioned DFS permit one to four workers; other CPU engines require one')
+    if pruning not in PRUNING_PROFILES:
+        raise ValueError('pruning must be baseline, strong or full')
     if type(port) is not int or not 1 <= port <= 65535:
         raise ValueError('port must be 1..65535')
     if backend not in ('auto', 'cuda', 'opencl') or type(replicas) is not int or not 32 <= replicas <= 32768:
         raise ValueError('Hybrid requires a valid GPU backend and batch size32..32768')
     return {'backend': backend, 'replicas': replicas, 'engine': engine, 'seconds': seconds, 'seed': seed, 'workers': workers,
-            'port': port, 'memory_soft_limit_mb': MEMORY_SOFT_LIMIT_MB, 'scope': SCOPE}
+            'port': port, 'memory_soft_limit_mb': MEMORY_SOFT_LIMIT_MB, 'scope': SCOPE, 'pruning': pruning}
+
+
+def _known_cached_board(home, board, digest):
+    """Exact placement lookup only: absence never establishes a discovery."""
+    database = Path(home) / 'library' / 'library.sqlite3'
+    if not database.is_file():
+        return None
+    connection = None
+    try:
+        connection = sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True, timeout=.5)
+        blob = struct.pack('<256H', *board)
+        found = connection.execute('SELECT 1 FROM boards WHERE local_sha=? AND placement=? LIMIT 1', (digest, blob)).fetchone()
+        return True if found else None
+    except (OSError, sqlite3.Error):
+        return None
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 class _PreparationEnded(Exception):
@@ -129,14 +160,14 @@ def _load_or_sample_hints(path, bundle, fingerprint, seed, backend, replicas, se
 
 
 def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, workers=1,
-             preserve_stop=False, port=8765, fresh_exact=False, backend='auto', replicas=4096, solver_factory=None, sampler_factory=None):
+             preserve_stop=False, port=8765, fresh_exact=False, backend='auto', replicas=4096, pruning='baseline', solver_factory=None, sampler_factory=None):
     """Run one exact search, returning an exit code; injected factories are for tests.
 
     A solver factory receives the engine name and returns its solve callable.
     Native SAT/CP search state is not resumed. DFS checkpoints are used only
     when the selected implementation exposes its explicit checkpoint API.
     """
-    settings = _settings(engine, seconds, seed, workers, port, backend, replicas)
+    settings = _settings(engine, seconds, seed, workers, port, backend, replicas, pruning)
     settings['fresh_exact'] = bool(fresh_exact)
     home = state_root(state_dir)
     runtime = home / 'runtime'
@@ -164,13 +195,17 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
               'port': port, 'state_dir': str(home), 'start_time': _now(),
               'last_update': _now(), 'elapsed_seconds': 0.0, 'best_score': None,
               'source_best_score': 466, 'branches': 0, 'conflicts': 0,
-              'exact_counters_available': engine in ('dfs', 'hybrid'),
+              'exact_counters_available': engine in ('dfs', 'hybrid', 'partitioned'),
+              'pruning': pruning, 'neighborhoods': 0, 'recombinations': 0,
               'exact_phase': 'starting', 'scope': SCOPE,
               'external_network_enabled': False,
               'library': {'enabled': False, 'network_enabled': False, 'mode': 'offline'},
               'counter_semantics': 'local exact-search branches/conflicts; not BOINC nodes or credit',
               'memory_soft_limit_mb': MEMORY_SOFT_LIMIT_MB, 'resumed': False,
               'resume_capability': 'none; each native SAT/CP run starts a new search'}
+    if engine == 'matching':
+        status.update(branches=None, conflicts=None,
+                      counter_semantics='completed repair neighborhoods and recombinations; not exhaustive branches or BOINC credit')
     session = {'schema_version': 1, 'settings': settings, 'started_at': status['start_time'],
                'scope': SCOPE, 'external_network_enabled': False}
 
@@ -219,7 +254,10 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             return
         with guard:
             for key in ('branches', 'conflicts', 'max_depth', 'propagations', 'matching_checks',
-                        'matching_failures', 'build_seconds', 'variables', 'clauses', 'table_rows'):
+                        'matching_failures', 'build_seconds', 'variables', 'clauses', 'table_rows',
+                        'neighborhoods', 'recombinations', 'rounds', 'free_cells', 'cores',
+                        'tickets_total', 'tickets_completed',
+                        'gac_checks', 'gac_removed', 'independent_completions', 'probe_checks', 'probe_rejections'):
                 value = progress.get(key)
                 if type(value) in (int, float) and math.isfinite(value) and value >= 0:
                     status[key] = value
@@ -228,10 +266,36 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             phase = progress.get('phase')
             if isinstance(phase, str):
                 status['exact_phase'] = phase[:80]
-            elif engine in ('dfs', 'hybrid'):
+            elif engine in ('dfs', 'hybrid', 'partitioned'):
                 status['exact_phase'] = 'searching'
             if isinstance(progress.get('backend'), str):
                 status['backend'] = progress['backend'][:80]
+
+    def on_improvement(candidate):
+        nonlocal best
+        if not isinstance(candidate, dict):
+            raise RuntimeError('Repair backend returned an invalid candidate record')
+        board = candidate.get('board')
+        report = validate_board(board, bundle)
+        if not report['valid'] or type(candidate.get('score')) is not int or report['score'] != candidate['score']:
+            raise RuntimeError('Repair candidate failed independent board and score validation')
+        with guard:
+            if report['score'] <= status['best_score']:
+                return
+            board = list(board)
+            digest = hashlib.sha256(struct.pack('<256H', *board)).hexdigest()
+            known = _known_cached_board(home, board, digest)
+            source = 'existing local library arrangement' if known else 'local search result; discovery status unverified'
+            record = {'score': report['score'], 'board': board, 'validated': True, 'complete': report['complete'],
+                      'library_known': known, 'source': source, 'sha256_uint16le': digest, 'found_at': _now(),
+                      'search_method': 'exact-' + engine, 'scope': SCOPE,
+                      'project_acceptance_confirmed': False, 'automatic_upload': False}
+            (home / 'results').mkdir(exist_ok=True)
+            _atomic_json(home / 'results' / f'{report["score"]}-{digest}.json', record)
+            _atomic_json(runtime / 'best.json', record)
+            best = board
+            status.update(best_score=report['score'], board_source=source, library_known=known)
+            save_status()
 
     def heartbeat_loop():
         nonlocal background_error
@@ -266,6 +330,9 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                     best = list(prior['board'])
                     status['best_score'] = report['score']
                     prior_valid = True
+                    status['library_known'] = True if prior.get('library_known') is True else None
+                    if isinstance(prior.get('source'), str):
+                        status['board_source'] = prior['source'][:160]
                 else:
                     status['saved_best_warning'] = 'Saved board rejected; using the verified bundled reference'
             except (OSError, ValueError, TypeError, AttributeError):
@@ -289,6 +356,31 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             solve_args = {'problem': problem, 'seconds': UNBOUNDED_SECONDS if seconds is None else seconds,
                           'seed': seed, 'workers': workers, 'should_stop': should_stop,
                           'on_progress': on_progress}
+            if engine in ('dfs', 'hybrid', 'partitioned'):
+                solve_args['options'] = {} if pruning == 'baseline' else {
+                    'gac': True, 'independent_completion': True, 'dual_branch': True,
+                    'edge_branch': True, 'extra_rules': None}
+                if pruning == 'full':
+                    solve_args['options'].update(probe=True, extra_rules={})
+            if engine == 'partitioned':
+                queue_path = runtime / 'exact-partitioned-queue.json'
+                if fresh_exact and queue_path.exists():
+                    queue_path.replace(runtime / f'{queue_path.stem}.archived-{time.time_ns()}.json')
+                    status['previous_checkpoint_archived'] = True
+                solve_args['queue_path'] = queue_path
+                status['resumed'] = queue_path.exists()
+                status['resume_capability'] = 'explicit partition queue with per-task DFS frontiers'
+            if engine in REPAIR_ENGINES:
+                solve_args.update(reference=list(best), on_improvement=on_improvement)
+                status['resume_capability'] = 'saved best board only; starts a fresh repair search'
+                if engine == 'matching':
+                    from smart_repair import cached_parents
+                    try:
+                        solve_args['parents'] = cached_parents(problem, home / 'library' / 'library.sqlite3', limit=32)
+                    except (OSError, ValueError, sqlite3.Error) as exc:
+                        solve_args['parents'] = []
+                        status['cached_parents_warning'] = f'Local parent cache unavailable: {type(exc).__name__}'
+                    status['cached_parent_count'] = len(solve_args['parents'])
             checkpoint_path = runtime / ('exact-hybrid-dfs-checkpoint.json' if engine == 'hybrid' else 'exact-dfs-checkpoint.json')
             hint_solution = None
             if engine == 'hybrid':
@@ -360,7 +452,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             try:
                 result = {'outcome':'solved','board':hint_solution} if hint_solution is not None else solver(**solve_args)
             except ValueError as exc:
-                if engine in ('dfs', 'hybrid') and status['resumed']:
+                if engine in ('dfs', 'hybrid', 'partitioned') and status['resumed']:
                     raise ValueError(f'DFS checkpoint could not be resumed; use --fresh-exact to archive it and restart: {exc}') from exc
                 raise
             heartbeat_done.set()
@@ -373,8 +465,14 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
         if background_error is not None:
             raise RuntimeError('Exact worker resource/status monitoring failed') from background_error
         outcome = result.get('outcome')
-        if outcome not in ('solved', 'infeasible', 'timeout', 'stopped'):
+        allowed = ('solved', 'timeout', 'stopped', 'improved', 'infeasible_for_target', 'unchanged') if engine in REPAIR_ENGINES else ('solved', 'infeasible', 'timeout', 'stopped')
+        if outcome not in allowed:
             raise RuntimeError('Exact backend returned an invalid outcome')
+        if engine in REPAIR_ENGINES and result.get('board') is not None:
+            on_improvement(result)
+        if engine in REPAIR_ENGINES and validate_board(best, bundle)['complete']:
+            outcome = 'solved'
+            result = dict(result, board=best)
         on_progress(result)
         status['exact_outcome'] = outcome
         if outcome == 'solved':
@@ -382,15 +480,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             report = validate_board(board, bundle)
             if not report['complete']:
                 raise RuntimeError('Exact result failed independent full-board 480/480 validation')
-            best = list(board)
-            digest = hashlib.sha256(struct.pack('<256H', *best)).hexdigest()
-            record = {'score': 480, 'board': best, 'validated': True, 'complete': True,
-                      'library_known': None, 'sha256_uint16le': digest, 'found_at': _now(),
-                      'search_method': 'exact-' + engine, 'scope': SCOPE,
-                      'project_acceptance_confirmed': False, 'automatic_upload': False}
-            (home / 'results').mkdir(exist_ok=True)
-            _atomic_json(runtime / 'best.json', record)
-            _atomic_json(home / 'results' / f'480-{digest}.json', record)
+            on_improvement({'board': board, 'score': 480})
             status.update(state='solved', best_score=480, exact_phase='complete')
         elif stop_event.is_set():
             # A late stop takes precedence over an untrusted backend UNSAT flag.
@@ -406,6 +496,10 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
         elif outcome == 'timeout':
             status.update(state='finished_bounded_run', exact_phase='timeout',
                           exact_conclusion='Time budget ended; no feasibility conclusion')
+        elif outcome in ('improved', 'infeasible_for_target', 'unchanged'):
+            status.update(state='finished_bounded_run', exact_phase='finished', coverage_verified=False,
+                          proof_scope=result.get('proof_scope', 'selected_repair_target'),
+                          exact_conclusion='Repair target search ended. Saved improvements remain available; this is not a proof that the complete puzzle is impossible')
         else:
             status.update(state='stopped', exact_phase='stopped')
         if engine in ('dfs', 'hybrid') and status['state'] in ('solved', 'infeasible', 'checkpoint_frontier_exhausted'):
@@ -433,7 +527,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             save_status()
             session.update(finished_at=_now(), outcome=status.get('exact_outcome'), status=dict(status),
                            elapsed_seconds=time.monotonic() - started,
-                           native_search_state_resumed=False if engine not in ('dfs', 'hybrid') else status['resumed'])
+                           native_search_state_resumed=False if engine not in ('dfs', 'hybrid', 'partitioned') else status['resumed'])
             if isinstance(result, dict):
                 session['result'] = {key: value for key, value in result.items() if key not in ('board', 'checkpoint')}
             _atomic_json(runtime / 'exact-session.json', session)
@@ -453,6 +547,7 @@ def main(argv=None, solver_factory=None):
     parser.add_argument('--workers', type=int, default=1)
     parser.add_argument('--backend', choices=('auto','cuda','opencl'), default='auto')
     parser.add_argument('--replicas', type=int, default=4096, help='Hybrid GPU sample batch32..32768')
+    parser.add_argument('--pruning', choices=PRUNING_PROFILES, default='baseline', help='DFS pruning profile; changing profile requires a compatible checkpoint or --fresh-exact')
     parser.add_argument('--preserve-stop', action='store_true')
     parser.add_argument('--fresh-exact', action='store_true', help='Archive the existing DFS checkpoint and start from the full puzzle')
     parser.add_argument('--port', type=int, default=8765, help='Dashboard metadata only; no server is started')

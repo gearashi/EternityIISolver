@@ -18,7 +18,8 @@ from validator import load_bundle, validate_board
 
 
 DEFAULT_SETTINGS = {'replicas': 4096, 'backend': 'auto', 'seed': 20261007,
-                    'no_library': False, 'seconds': None, 'method': 'gpu', 'exact_engine': 'dfs', 'workers': 1}
+                    'no_library': False, 'seconds': None, 'method': 'gpu', 'exact_engine': 'dfs', 'workers': 1,
+                    'pruning': 'baseline', 'fresh_exact': False}
 MAX_BODY = 4096
 
 
@@ -28,11 +29,13 @@ def validate_settings(value):
     settings = dict(DEFAULT_SETTINGS, **value)
     if settings['method'] not in ('gpu', 'exact'):
         raise ValueError('Search method must be gpu or exact')
-    if settings['exact_engine'] not in ('dfs', 'sat', 'cp-sat', 'hybrid'):
-        raise ValueError('Exact engine must be dfs, sat, cp-sat or hybrid')
+    if settings['exact_engine'] not in ('dfs', 'sat', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned'):
+        raise ValueError('Unsupported CPU search engine')
+    if settings['pruning'] not in ('baseline', 'strong', 'full') or type(settings['fresh_exact']) is not bool:
+        raise ValueError('Invalid pruning profile or fresh-exact setting')
     if type(settings['workers']) is not int or not 1 <= settings['workers'] <= 4:
         raise ValueError('CPU workers must be an integer from 1 to 4')
-    if settings['method'] == 'exact' and settings['exact_engine'] != 'cp-sat' and settings['workers'] != 1:
+    if settings['method'] == 'exact' and settings['exact_engine'] not in ('cp-sat', 'optimize', 'partitioned') and settings['workers'] != 1:
         raise ValueError('SAT and backtracking use one CPU worker')
     if type(settings['replicas']) is not int or not 32 <= settings['replicas'] <= 32768:
         raise ValueError('Parallel searches must be an integer from 32 to 32768')
@@ -54,7 +57,10 @@ def worker_command(home, port, settings):
         command.append(str(Path(__file__).resolve().with_name('launcher.py')))
     if settings['method'] == 'exact':
         command.extend(['exact', '--preserve-stop', '--state-dir', str(home), '--port', str(port),
-                        '--engine', settings['exact_engine'], '--workers', str(settings['workers']), '--seed', str(settings['seed'])])
+                        '--engine', settings['exact_engine'], '--workers', str(settings['workers']), '--seed', str(settings['seed']),
+                        '--pruning', settings.get('pruning', 'baseline')])
+        if settings.get('fresh_exact'):
+            command.append('--fresh-exact')
         if settings['exact_engine'] == 'hybrid':
             command.extend(['--backend', settings['backend'], '--replicas', str(settings['replicas'])])
         if settings['seconds'] is not None:
@@ -189,12 +195,13 @@ class DashboardServer(ThreadingHTTPServer):
                     # Trust a newly written worker status, never stale PID equality.
                     if not fresh_status:
                         saved.update(state='starting', pid=self.worker.pid, process_alive=True)
-                        saved.update({key: self.settings[key] for key in ('replicas', 'backend', 'seed', 'method', 'exact_engine', 'workers')})
+                        saved.update({key: self.settings[key] for key in ('replicas', 'backend', 'seed', 'method', 'exact_engine', 'workers', 'pruning')})
                         if self.settings['method'] == 'exact':
-                            native = self.settings['exact_engine'] in ('sat', 'cp-sat')
+                            native = self.settings['exact_engine'] not in ('dfs', 'hybrid', 'partitioned')
                             saved.update(branches=None if native else 0, conflicts=None if native else 0,
                                          exact_counters_available=not native, exact_phase='starting')
-                            for key in ('max_depth', 'exact_outcome', 'exact_conclusion'):
+                            saved.update(neighborhoods=0, recombinations=0)
+                            for key in ('max_depth', 'exact_outcome', 'exact_conclusion', 'rounds', 'free_cells', 'cores'):
                                 saved.pop(key, None)
                         saved.pop('error', None)
                         saved.pop('traceback', None)
@@ -276,10 +283,12 @@ class DashboardServer(ThreadingHTTPServer):
             with (self.runtime / 'solver.stdout.log').open('ab') as stdout, (self.runtime / 'solver.stderr.log').open('ab') as stderr:
                 self.worker = self.worker_factory(command, stdout=stdout, stderr=stderr, **options)
             self.settings = settings
+            # Restart is a one-click action, never a persistent preference.
+            self.settings['fresh_exact'] = False
             atomic_json(self.runtime / 'dashboard-settings.json', settings)
             status = self.status()
             status.update(replicas=settings['replicas'], backend=settings['backend'], seed=settings['seed'],
-                          method=settings['method'], exact_engine=settings['exact_engine'], workers=settings['workers'])
+                          method=settings['method'], exact_engine=settings['exact_engine'], workers=settings['workers'], pruning=settings['pruning'])
             return status, True
 
     def stop_worker(self):

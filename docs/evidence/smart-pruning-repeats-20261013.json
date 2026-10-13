@@ -1,0 +1,308 @@
+{
+  "schema_version": 1,
+  "started_utc": "2026-10-13T16:48:55.668642+00:00",
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19044-SP0",
+  "source_sha256_before": {
+    "exact_dfs.py": "7a67c822f6ccf7e757ca93743279c80acecdc771b3f08298569f451d30be5127",
+    "exact_rules.py": "77c02cebcbc60217cc5703a5162afe8db8cd0811885c76e33e6b6b4dc4a12f2a",
+    "exact_model.py": "da42732e62faadfa40eae9ab8e2674ff5eb9a92965f2606ae73bf3b8c82d5279",
+    "validator.py": "a2266ad4bb2ce0963ca02395fd99a13007415550d285364c886114b3f8aca56a",
+    "search_resources.py": "32adb88eab7ade8555745157b834625ba0566e3b621b659182b0fdf16a6ab81d",
+    "scripts/benchmark_smart_search.py": "0065338c32837c593dcb8f86405a952b4e4f55c3bc5831a4eebb87a1896895a1"
+  },
+  "variants": {
+    "baseline": {},
+    "gac": {
+      "gac": true
+    },
+    "independent": {
+      "independent_completion": true
+    },
+    "dual": {
+      "dual_branch": true
+    },
+    "edge": {
+      "edge_branch": true
+    },
+    "probe": {
+      "probe": true
+    },
+    "cheap-combined": {
+      "gac": true,
+      "independent_completion": true,
+      "dual_branch": true,
+      "edge_branch": true
+    },
+    "identical-hall": {
+      "extra_rules": {
+        "hall": true,
+        "color_balance": false,
+        "directional_balance": false,
+        "blocks": false,
+        "color_flow": false
+      }
+    },
+    "checkerboard": {
+      "extra_rules": {
+        "hall": false,
+        "color_balance": true,
+        "directional_balance": false,
+        "blocks": false,
+        "color_flow": false
+      }
+    },
+    "directional": {
+      "extra_rules": {
+        "hall": false,
+        "color_balance": false,
+        "directional_balance": true,
+        "blocks": false,
+        "color_flow": false
+      }
+    },
+    "blocks-2x2": {
+      "extra_rules": {
+        "hall": false,
+        "color_balance": false,
+        "directional_balance": false,
+        "blocks": true,
+        "color_flow": false
+      }
+    },
+    "color-flow": {
+      "extra_rules": {
+        "hall": false,
+        "color_balance": false,
+        "directional_balance": false,
+        "blocks": false,
+        "color_flow": true
+      }
+    },
+    "all-additional-rules": {
+      "extra_rules": {}
+    },
+    "cheap-plus-additional": {
+      "gac": true,
+      "independent_completion": true,
+      "dual_branch": true,
+      "edge_branch": true,
+      "extra_rules": {}
+    }
+  },
+  "seed": 17,
+  "limits": {
+    "wall_seconds": 20.0,
+    "ordinary_seconds": 1.0,
+    "whole_seconds": 3.0,
+    "workers_per_child": 1,
+    "soft_peak_memory_mb": 2048,
+    "hard_child_timeout_extra_seconds": 8
+  },
+  "results": [
+    {
+      "branches": 263,
+      "conflicts": 89,
+      "propagations": 47258,
+      "max_depth": 110,
+      "matching_checks": 174,
+      "matching_failures": 0,
+      "gac_checks": 0,
+      "gac_removed": 0,
+      "independent_checks": 0,
+      "independent_completions": 0,
+      "probe_checks": 0,
+      "probe_rejections": 0,
+      "cell_branches": 263,
+      "piece_branches": 0,
+      "edge_branches": 0,
+      "backend": "dfs-python",
+      "elapsed_seconds": 3.000080000143498,
+      "build_seconds": 0.08681550016626716,
+      "hint_count": 0,
+      "hint_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "ordering_version": "mrv-degree-lcv-hint-partitions-v2",
+      "options": {
+        "gac": false,
+        "independent_completion": false,
+        "dual_branch": false,
+        "edge_branch": false,
+        "probe": false,
+        "probe_max_candidates": 8,
+        "probe_max_domain": 8,
+        "probe_max_depth": 8,
+        "extra_rules": null
+      },
+      "options_hash": "e6cc2dab7f6f239baa279d8eb541596676184cb87d0cf3d654bb0f6b8a7634ae",
+      "rules_version": null,
+      "rule_counters_session": {},
+      "outcome": "timeout",
+      "board": null,
+      "workers": 1,
+      "language": "python",
+      "resumed": false,
+      "proof_scope": "entire_supplied_problem",
+      "coverage_verified": false,
+      "solution_verified": false,
+      "case": "whole-five-clue",
+      "variant": "baseline",
+      "scope": "whole original puzzle with all 480 edges and all five official clues",
+      "problem_sha256": "975dc98ccb72aeb53cc854e5de30c69b84dd9290763d28c4ba485f4b4f3713db",
+      "source_sha256": {
+        "exact_dfs.py": "7a67c822f6ccf7e757ca93743279c80acecdc771b3f08298569f451d30be5127",
+        "exact_rules.py": "77c02cebcbc60217cc5703a5162afe8db8cd0811885c76e33e6b6b4dc4a12f2a",
+        "exact_model.py": "da42732e62faadfa40eae9ab8e2674ff5eb9a92965f2606ae73bf3b8c82d5279",
+        "validator.py": "a2266ad4bb2ce0963ca02395fd99a13007415550d285364c886114b3f8aca56a",
+        "search_resources.py": "32adb88eab7ade8555745157b834625ba0566e3b621b659182b0fdf16a6ab81d",
+        "scripts/benchmark_smart_search.py": "0065338c32837c593dcb8f86405a952b4e4f55c3bc5831a4eebb87a1896895a1"
+      },
+      "requested_seconds": 3.0,
+      "worker_count": 1,
+      "task_wall_seconds": 3.0160000000614673,
+      "peak_memory_mb": 30.671875,
+      "total_process_seconds": 3.7189999998081475
+    },
+    {
+      "branches": 290,
+      "conflicts": 102,
+      "propagations": 53130,
+      "max_depth": 110,
+      "matching_checks": 188,
+      "matching_failures": 0,
+      "gac_checks": 0,
+      "gac_removed": 0,
+      "independent_checks": 0,
+      "independent_completions": 0,
+      "probe_checks": 0,
+      "probe_rejections": 0,
+      "cell_branches": 290,
+      "piece_branches": 0,
+      "edge_branches": 0,
+      "backend": "dfs-python",
+      "elapsed_seconds": 3.00010919990018,
+      "build_seconds": 0.07584039983339608,
+      "hint_count": 0,
+      "hint_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "ordering_version": "mrv-degree-lcv-hint-partitions-v2",
+      "options": {
+        "gac": false,
+        "independent_completion": false,
+        "dual_branch": false,
+        "edge_branch": false,
+        "probe": false,
+        "probe_max_candidates": 8,
+        "probe_max_domain": 8,
+        "probe_max_depth": 8,
+        "extra_rules": null
+      },
+      "options_hash": "e6cc2dab7f6f239baa279d8eb541596676184cb87d0cf3d654bb0f6b8a7634ae",
+      "rules_version": null,
+      "rule_counters_session": {},
+      "outcome": "timeout",
+      "board": null,
+      "workers": 1,
+      "language": "python",
+      "resumed": false,
+      "proof_scope": "entire_supplied_problem",
+      "coverage_verified": false,
+      "solution_verified": false,
+      "case": "whole-five-clue",
+      "variant": "baseline",
+      "scope": "whole original puzzle with all 480 edges and all five official clues",
+      "problem_sha256": "975dc98ccb72aeb53cc854e5de30c69b84dd9290763d28c4ba485f4b4f3713db",
+      "source_sha256": {
+        "exact_dfs.py": "7a67c822f6ccf7e757ca93743279c80acecdc771b3f08298569f451d30be5127",
+        "exact_rules.py": "77c02cebcbc60217cc5703a5162afe8db8cd0811885c76e33e6b6b4dc4a12f2a",
+        "exact_model.py": "da42732e62faadfa40eae9ab8e2674ff5eb9a92965f2606ae73bf3b8c82d5279",
+        "validator.py": "a2266ad4bb2ce0963ca02395fd99a13007415550d285364c886114b3f8aca56a",
+        "search_resources.py": "32adb88eab7ade8555745157b834625ba0566e3b621b659182b0fdf16a6ab81d",
+        "scripts/benchmark_smart_search.py": "0065338c32837c593dcb8f86405a952b4e4f55c3bc5831a4eebb87a1896895a1"
+      },
+      "requested_seconds": 3.0,
+      "worker_count": 1,
+      "task_wall_seconds": 3.0149999998975545,
+      "peak_memory_mb": 30.640625,
+      "total_process_seconds": 3.719000000040978
+    },
+    {
+      "branches": 192,
+      "conflicts": 50,
+      "propagations": 33684,
+      "max_depth": 108,
+      "matching_checks": 142,
+      "matching_failures": 0,
+      "gac_checks": 0,
+      "gac_removed": 0,
+      "independent_checks": 0,
+      "independent_completions": 0,
+      "probe_checks": 0,
+      "probe_rejections": 0,
+      "cell_branches": 192,
+      "piece_branches": 0,
+      "edge_branches": 0,
+      "backend": "dfs-python",
+      "elapsed_seconds": 3.0001687000039965,
+      "build_seconds": 0.08473960007540882,
+      "hint_count": 0,
+      "hint_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "ordering_version": "mrv-degree-lcv-hint-partitions-v2",
+      "options": {
+        "gac": false,
+        "independent_completion": false,
+        "dual_branch": false,
+        "edge_branch": false,
+        "probe": false,
+        "probe_max_candidates": 8,
+        "probe_max_domain": 8,
+        "probe_max_depth": 8,
+        "extra_rules": null
+      },
+      "options_hash": "e6cc2dab7f6f239baa279d8eb541596676184cb87d0cf3d654bb0f6b8a7634ae",
+      "rules_version": null,
+      "rule_counters_session": {},
+      "outcome": "timeout",
+      "board": null,
+      "workers": 1,
+      "language": "python",
+      "resumed": false,
+      "proof_scope": "entire_supplied_problem",
+      "coverage_verified": false,
+      "solution_verified": false,
+      "case": "whole-five-clue",
+      "variant": "baseline",
+      "scope": "whole original puzzle with all 480 edges and all five official clues",
+      "problem_sha256": "975dc98ccb72aeb53cc854e5de30c69b84dd9290763d28c4ba485f4b4f3713db",
+      "source_sha256": {
+        "exact_dfs.py": "7a67c822f6ccf7e757ca93743279c80acecdc771b3f08298569f451d30be5127",
+        "exact_rules.py": "77c02cebcbc60217cc5703a5162afe8db8cd0811885c76e33e6b6b4dc4a12f2a",
+        "exact_model.py": "da42732e62faadfa40eae9ab8e2674ff5eb9a92965f2606ae73bf3b8c82d5279",
+        "validator.py": "a2266ad4bb2ce0963ca02395fd99a13007415550d285364c886114b3f8aca56a",
+        "search_resources.py": "32adb88eab7ade8555745157b834625ba0566e3b621b659182b0fdf16a6ab81d",
+        "scripts/benchmark_smart_search.py": "0065338c32837c593dcb8f86405a952b4e4f55c3bc5831a4eebb87a1896895a1"
+      },
+      "requested_seconds": 3.0,
+      "worker_count": 1,
+      "task_wall_seconds": 3.047000000020489,
+      "peak_memory_mb": 30.49609375,
+      "total_process_seconds": 3.7339999999385327
+    }
+  ],
+  "non_claims": [
+    "Timeout and stop are inconclusive; regional infeasibility is conditional on the frozen outside.",
+    "Branches and maximum depth are not coverage percentages and may not be comparable across branching schemes.",
+    "Short synthetic cases do not establish full-puzzle speed; desktop load is uncontrolled.",
+    "No solver/app/runtime state is changed and no network or GPU work is performed."
+  ],
+  "finished_utc": "2026-10-13T16:49:06.959885+00:00",
+  "wall_seconds": 11.296999999787658,
+  "wall_cap_stopped": false,
+  "source_sha256_after": {
+    "exact_dfs.py": "7a67c822f6ccf7e757ca93743279c80acecdc771b3f08298569f451d30be5127",
+    "exact_rules.py": "77c02cebcbc60217cc5703a5162afe8db8cd0811885c76e33e6b6b4dc4a12f2a",
+    "exact_model.py": "da42732e62faadfa40eae9ab8e2674ff5eb9a92965f2606ae73bf3b8c82d5279",
+    "validator.py": "a2266ad4bb2ce0963ca02395fd99a13007415550d285364c886114b3f8aca56a",
+    "search_resources.py": "32adb88eab7ade8555745157b834625ba0566e3b621b659182b0fdf16a6ab81d",
+    "scripts/benchmark_smart_search.py": "0065338c32837c593dcb8f86405a952b4e4f55c3bc5831a4eebb87a1896895a1"
+  },
+  "sources_unchanged": true
+}

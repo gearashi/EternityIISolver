@@ -112,6 +112,10 @@ The [CPU workunit inspector](docs/BOINC_CPU.md) checks selected assignment input
 
 A project message supplied by the user reports that the project's tested GPU DFS implementation was about **7,000× slower** than its CPU implementation, and that tested repair approaches plateaued. Those measurements have not been independently reproduced here and do not establish the performance of every GPU algorithm. The message also requires project-controlled production-build validation and says anonymous-platform replacement is disabled. Local move throughput is not evidence of a BOINC speedup.
 
+## Experimental search improvements
+
+The development build adds selectable strong DFS pruning, explicit parallel DFS partitions, CP-SAT score optimization, assumption-core repair, and matching/cycle board repair. See [smart-search methods and evidence](docs/SMART_SEARCH.md). These are measured experiments, not a claim of a 480 solution or a universal speedup. The ordinary GPU solver remains available. All workers run offline; only manual archive downloads contact the library.
+
 ## Search and validation
 
 CPU exact search enforces one use of each piece, legal rotations, the gray frame, the five fixed clue states, and all 480 edge equalities. Its runtime is not bounded in advance: a timeout or manual stop is inconclusive. Exhausting a restored DFS frontier is not an independent unsatisfiability certificate. The [exact-search notes](docs/EXACT_SEARCH.md) distinguish whole-puzzle search from restricted regional benchmark tasks.

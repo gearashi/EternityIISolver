@@ -90,6 +90,47 @@ class ExactSATTests(unittest.TestCase):
         answer = exact_sat.solve(problem, seconds=5)
         self.assertEqual(answer['outcome'], 'infeasible')
 
+    def test_reverse_support_preserves_solutions_and_adds_clauses(self):
+        problem, _ = generated_problem(2, 3, 11)
+        enhanced = exact_sat.solve(problem, seconds=2)
+        original = exact_sat.solve(problem, seconds=2, reverse_support=False)
+        self.assertEqual(enhanced['outcome'], 'solved')
+        self.assertEqual(original['outcome'], 'solved')
+        self.assertTrue(check_solution(problem, enhanced['board']))
+        self.assertTrue(check_solution(problem, original['board']))
+        self.assertEqual(enhanced['variables'], original['variables'])
+        self.assertGreater(enhanced['clauses'], original['clauses'])
+        self.assertTrue(enhanced['reverse_support'])
+        self.assertFalse(original['reverse_support'])
+
+    def test_assumption_core_is_a_sufficient_frozen_placement_conflict(self):
+        problem = tiny_problem()
+        # Structurally legal placement of the four pieces, with mismatched
+        # colors. No temporary freeze is hard-coded into the cell domains.
+        reference = [4 + 3, 0 + 1, 12 + 1, 8 + 3]
+        from exact_optimize import evaluate_board
+        self.assertTrue(evaluate_board(problem, reference)['valid'])
+        self.assertFalse(check_solution(problem, reference))
+        answer = exact_sat.solve_with_assumptions(problem, dict(enumerate(reference)), seconds=2)
+        self.assertEqual(answer['outcome'], 'infeasible')
+        self.assertTrue(answer['core_cells'])
+        verified = exact_sat.solve_with_assumptions(problem, answer['core_placements'], seconds=2)
+        self.assertEqual(verified['outcome'], 'infeasible')
+        self.assertEqual(exact_sat.solve(problem, seconds=2)['outcome'], 'solved')
+
+    def test_assumption_absent_from_domain_and_base_unsat_core(self):
+        problem = tiny_problem(fixed={0: 0})
+        answer = exact_sat.solve_with_assumptions(problem, {0: 4 + 3}, seconds=2)
+        self.assertEqual(answer['outcome'], 'infeasible')
+        self.assertEqual(answer['core_cells'], [0])
+        self.assertEqual(answer['core_placements'], {0: 7})
+        base_unsat = exact_sat.solve_with_assumptions(tiny_problem(True), {}, seconds=2)
+        self.assertEqual(base_unsat['outcome'], 'infeasible')
+        self.assertEqual(base_unsat['core_cells'], [])
+        timeout = exact_sat.solve_with_assumptions(problem, {0: 7}, seconds=0)
+        self.assertEqual(timeout['outcome'], 'timeout')
+        self.assertIsNone(timeout['core_cells'])
+
     def test_immediate_timeout_is_not_infeasible(self):
         answer = exact_sat.solve(tiny_problem(), seconds=0)
         self.assertEqual(answer['outcome'], 'timeout')

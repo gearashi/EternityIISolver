@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "claim_id": "eii-smart-search-20261013",
+  "repository": {
+    "commit": "68fa72eb87487f062392c3f3e341f8586f362dc4",
+    "dirty": true
+  },
+  "command": "python -B scripts/benchmark_smart_search.py --output RESULT; repeat with --variants baseline --cases whole-five-clue whole-five-clue whole-five-clue; python -B scripts/benchmark_repair_modes.py --output RESULT; repeat with --modes core-repair --wall-seconds 32 --output RESULT. Each RESULT is a fresh path; exact per-case limits and seeds are stored in the corresponding report.",
+  "environment": {
+    "software": [
+      "Python 3.12.14",
+      "OR-Tools 9.15",
+      "python-sat native Glucose4",
+      "Windows 10.0.19044"
+    ],
+    "hardware": "Intel Core i7-4790 @ 3.60GHz; 4 physical cores / 8 logical processors; one CPU worker per benchmark; no GPU benchmarks in this comparison"
+  },
+  "mathematics": {
+    "assertion_tested": "Soundness in finite tiny cases and bounded runtime behavior of optional pruning, complete-board repair, and incremental assumption reuse; not solution of Eternity II.",
+    "coefficient_domain": "Exact integers, Boolean SAT, finite-domain tables and integer edge-match costs; native CP objective values are checked against integer board scores.",
+    "conventions": "State=4*(piece ID-1)+clockwise rotation; faces NESW; row-major cells; original16x16 with five fixed oriented clues and480 internal edges; regional tasks explicitly limit their constraint edges.",
+    "inputs": [
+      "data/pieces.txt",
+      "data/record466.json",
+      "Generated8x8 seeded task",
+      "Frozen12x12 region of bundled466 board",
+      "Bounded selection from previously imported local board archive; hashes of parent arrangements recorded in repair report",
+      "Exact measured source SHA256 maps are embedded in each report; pre-update source snapshot retained locally under research/smarter-search-20261013/repair-modes-source"
+    ],
+    "bounds": {
+      "dfs_ordinary_seconds": 1,
+      "dfs_full_seconds": 3,
+      "sat_seconds": 12,
+      "score_optimizer_seconds": 18,
+      "core_repair_seconds": 18,
+      "assignment_seconds": 5,
+      "cycle_seconds": 12,
+      "workers_per_benchmark": 1,
+      "soft_memory_mib": "1536 for repair;2048 for pruning; cooperative Windows monitoring",
+      "no_network": true,
+      "runtime_state": "isolated test paths; canonical best andSTOP hashes unchanged"
+    },
+    "non_claims": [
+      "No480 solution",
+      "No proof that the puzzle is impossible",
+      "No statistically reliable fastest algorithm ranking",
+      "No GPU speedup measured",
+      "No independent UNSAT certificate checked",
+      "Completed repair neighborhoods do not establish global optimum",
+      "Scores and native decisions are not BOINC work counts"
+    ]
+  },
+  "randomness": {
+    "used": true,
+    "generator": "Python random.Random / solver seed; seeds in reports and finite tests",
+    "seed": 17
+  },
+  "run": {
+    "started_at": "2026-10-13T16:46:39.166436+00:00",
+    "runtime_seconds": 175.21899999980815,
+    "exit_status": 0
+  },
+  "outputs": [
+    {
+      "path": "docs/evidence/smart-pruning-20261013.json",
+      "sha256": "85e20d00b7f2d5a10113c46159853eac878cfbb451b4d284479398452123d4ac"
+    },
+    {
+      "path": "docs/evidence/smart-pruning-repeats-20261013.json",
+      "sha256": "8a916d5b8d555b529d9b873d3d53f0d55d6c98387e7549ae88cc0c59282116ef"
+    },
+    {
+      "path": "docs/evidence/smart-repair-baseline-20261013.json",
+      "sha256": "ad810c6a63aaac67477b458036db605cb0b57b3dfd758190a6ae7dac7128f7be"
+    },
+    {
+      "path": "docs/evidence/smart-core-incremental-20261013.json",
+      "sha256": "e3af2c2084f220bead40456d68f8bf5b1a31535613b3b3056ff9cd3279850b4a"
+    }
+  ],
+  "checks": [
+    "All report source hashes unchanged during their measurements",
+    "Independent validator checked every returned actual board",
+    "Tiny exhaustive placement and matching oracles",
+    "Cancellation/checkpoint/queue scope regressions",
+    "312-test full regression suite passed after final SAT lifecycle hardening; all eight source exact/smart diagnostics passed; frozen build diagnostics are recorded separately"
+  ],
+  "result": "Finite tested assertions passed; every bounded whole-puzzle search was inconclusive. Best466 retained. Incremental SAT reduced repeated build time17.140s to2.094s and handled208 assumption sets instead of8 within the same18s budget.",
+  "residual_risks": [
+    "One desktop CPU, uncontrolled background load, short seeded trials",
+    "Legacy manifest schema: exact source hashes and limits reside in reports; no OS-enforced aggregate memory cap",
+    "Baseline optimizer report predates small-domain mismatch-bound integration; incremental report predates final API callback-close hardening",
+    "Cross-platform native behavior requires the existing CI build matrix; this local run is Windows only"
+  ]
+}

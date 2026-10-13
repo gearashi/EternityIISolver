@@ -1,9 +1,9 @@
-"""Bounded, local-only SAT backend for exact edge-matching problems.
+"""Bounded, offline SAT with a reusable assumption session.
 
-Cell/piece one-hot constraints and shared edge-color variables use linear-size
-sequential at-most-one clauses. No pairwise placement incompatibility table is
-built. The deadline covers encoding as well as native search; cancellation is
-cooperative between small encoding operations and interrupts native search.
+The base encoding uses cell/piece one-hot constraints and shared edge-color
+channels. A session retains one Glucose instance, its learned clauses, and
+selector implications across assumption queries. No assumption is a hard
+placement: removing its selector restores the corresponding alternatives.
 """
 from __future__ import annotations
 
@@ -49,113 +49,181 @@ class _Budget:
             raise _Cancelled(reason)
 
 
-def solve(problem, seconds=30.0, seed=0, workers=1, should_stop=None, on_progress=None):
-    """Return solved/infeasible/timeout/stopped; never treat interrupts as UNSAT.
-
-    Glucose4 uses one native worker. ``seed`` selects initial variable phases;
-    it is not a claim to configure Glucose's internal random-seed parameters.
-    Callbacks must be short and thread-safe; should_stop is also polled by the
-    search-interrupt monitor. No project service or GPU is used.
-    """
-    if isinstance(seconds, bool) or not math.isfinite(seconds) or seconds < 0:
+def _seconds(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
         raise ValueError('seconds must be finite and nonnegative')
-    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
-        raise ValueError('workers must be a positive integer')
-    if isinstance(seed, bool) or not isinstance(seed, int):
-        raise ValueError('seed must be an integer')
-    budget = _Budget(float(seconds), should_stop)
-    backend = 'pysat-glucose4'
-    native = None
-    monitor = None
-    done = threading.Event()
-    next_var = 0
-    clause_count = 0
-    build_seconds = None
-    outcome = 'timeout'
-    board = None
-    stats = {}
+    return float(value)
 
-    def new_var():
-        nonlocal next_var
-        next_var += 1
-        if next_var % 512 == 0:
-            budget.check()
-        return next_var
 
-    def add(clause):
-        nonlocal clause_count
-        if clause_count % 512 == 0:
-            budget.check()
-        native.add_clause(clause)
-        clause_count += 1
+class AssumptionSession:
+    """One native model, repeated temporary placement queries, one total budget.
 
-    def at_most_one(literals):
-        # Sinz sequential counter: one clause at each endpoint and three
-        # per interior item. Two-item groups need only one binary clause.
+    Construction starts the total deadline; the first solve lazily encodes the
+    base problem. ``solve(..., seconds=...)`` can impose a shorter query budget.
+    A native unknown/short query timeout never creates a core or poisons a later
+    query. An interrupted *encoding* is discarded and may be rebuilt if the
+    total budget remains. Completed base models are never rebuilt.
+
+    Use a context manager or call close(). Queries are serialized. During a
+    query, close() requests cancellation and returns immediately, even inside
+    a callback; query cleanup then deletes the solver after its monitor exits.
+    Callback time and selector preparation count against budgets.
+    Glucose uses one worker. Seed sets initial placement phases only.
+    """
+    def __init__(self, problem, seconds=30.0, seed=0, workers=1, should_stop=None,
+                 on_progress=None, *, reverse_support=True):
+        seconds = _seconds(seconds)
+        if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+            raise ValueError('workers must be a positive integer')
+        if isinstance(seed, bool) or not isinstance(seed, int):
+            raise ValueError('seed must be an integer')
+        if should_stop is not None and not callable(should_stop):
+            raise ValueError('should_stop must be callable')
+        if on_progress is not None and not callable(on_progress):
+            raise ValueError('on_progress must be callable')
+        if type(reverse_support) is not bool:
+            raise ValueError('reverse_support must be a boolean')
+        self.budget = _Budget(seconds, should_stop)
+        from exact_model import ExactProblem
+        # ExactProblem is frozen, but its fixed mapping and caller-supplied
+        # containers need not be. Encoding and validation must share this
+        # detached snapshot for the entire lifetime of the native CNF.
+        self.problem = ExactProblem(problem.size, tuple(tuple(face) for face in problem.faces),
+                                    dict(problem.fixed), tuple(tuple(domain) for domain in problem.domains),
+                                    None if problem.edges is None else tuple(tuple(edge) for edge in problem.edges))
+        self.seed, self.requested_workers = seed, workers
+        self.reverse_support, self.on_progress = reverse_support, on_progress
+        self.native = None
+        self._lock = threading.RLock()
+        self._lifecycle_lock = threading.Lock()
+        self._closing = threading.Event()
+        self.closed = False
+        self._active_query = False
+        self._built = self._base_unsat = False
+        self._query_deadline = self.budget.deadline
+        self._query_outcome = None
+        self.next_var = self.clause_count = 0
+        self.cell_vars = []
+        self.placements = []
+        self.selectors = {}
+        self.model_builds = self.queries = 0
+        self.total_build_seconds = 0.0
+
+    def __enter__(self):
+        if self.closed:
+            raise RuntimeError('SAT session is closed')
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+    def close(self):
+        self._closing.set()
+        # Never wait for the query lock: should_stop may call this method from
+        # the very monitor which that query must join. The separate lifecycle
+        # lock is held only while entering/leaving a query, never during a
+        # callback, native search or monitor join. It closes the race between
+        # a final cancellation check and releasing the query lock.
+        with self._lifecycle_lock:
+            if not self._active_query:
+                self._dispose()
+
+    def _dispose(self):
+        if not self.closed:
+            if self.native is not None:
+                self.native.delete()
+                self.native = None
+            self.closed = True
+
+    def _reason(self):
+        if self._query_outcome is None:
+            self._query_outcome = self.budget.reason()
+            if self._query_outcome is None and self._closing.is_set():
+                self._query_outcome = 'stopped'
+            if self._query_outcome is None and time.monotonic() >= self._query_deadline:
+                self._query_outcome = 'timeout'
+        return self._query_outcome
+
+    def check(self):
+        reason = self._reason()
+        if reason:
+            raise _Cancelled(reason)
+
+    def _new_var(self):
+        self.next_var += 1
+        if self.next_var % 512 == 0:
+            self.check()
+        return self.next_var
+
+    def _add(self, clause):
+        if self.clause_count % 512 == 0:
+            self.check()
+        self.native.add_clause(clause)
+        self.clause_count += 1
+
+    def _at_most_one(self, literals):
         if len(literals) < 2:
             return
         if len(literals) == 2:
-            add([-literals[0], -literals[1]])
+            self._add([-literals[0], -literals[1]])
             return
-        previous = new_var()
-        add([-literals[0], previous])
+        previous = self._new_var()
+        self._add([-literals[0], previous])
         for literal in literals[1:-1]:
-            current = new_var()
-            add([-literal, current])
-            add([-previous, current])
-            add([-literal, -previous])
+            current = self._new_var()
+            self._add([-literal, current])
+            self._add([-previous, current])
+            self._add([-literal, -previous])
             previous = current
-        add([-literals[-1], -previous])
+        self._add([-literals[-1], -previous])
 
-    def exactly_one(literals):
+    def _exactly_one(self, literals):
         if not literals:
             raise _Infeasible()
-        add(literals)
-        at_most_one(literals)
+        self._add(literals)
+        self._at_most_one(literals)
 
-    def progress(phase):
-        if on_progress is not None:
-            on_progress({'backend': backend, 'phase': phase,
-                         'elapsed_seconds': time.monotonic() - budget.started,
-                         'variables': next_var, 'clauses': clause_count})
-        budget.check()
+    def _progress(self, phase):
+        if self.on_progress is not None:
+            self.on_progress({'backend': 'pysat-glucose4', 'phase': phase,
+                              'elapsed_seconds': time.monotonic() - self.budget.started,
+                              'variables': self.next_var, 'clauses': self.clause_count,
+                              'model_builds': self.model_builds, 'assumption_queries': self.queries})
+        self.check()
 
-    try:
-        budget.check()
+    def _build(self):
+        self.check()
         try:
             from pysat.solvers import Glucose4
         except ImportError as exc:
             raise RuntimeError('The SAT backend requires the python-sat package') from exc
-        from exact_model import check_solution, constraint_edges
-        budget.check()
-        size = problem.size
-        if isinstance(size, bool) or not isinstance(size, int) or size < 1:
+        from exact_model import constraint_edges
+        self.check()
+        problem = self.problem
+        size, faces, fixed = problem.size, problem.faces, problem.fixed
+        if type(size) is not int or size < 1:
             raise ValueError('Problem size must be a positive integer')
         count = size * size
-        faces = problem.faces
         if len(faces) != 4 * count or any(len(face) != 4 for face in faces):
             raise ValueError('Expected four oriented NESW states per piece')
         if len(problem.domains) != count:
             raise ValueError('Expected one domain per board cell')
-        fixed = problem.fixed
-        if any(type(cell) is not int or not 0 <= cell < count or
-               type(state) is not int or not 0 <= state < len(faces)
-               for cell, state in fixed.items()):
+        if any(type(c) is not int or not 0 <= c < count or type(s) is not int or not 0 <= s < len(faces)
+               for c, s in fixed.items()):
             raise ValueError('Invalid fixed cell or state')
         occupied = {state // 4 for state in fixed.values()}
-        native = Glucose4()
-        progress('encoding')
-        cell_vars = []
+        self.native = Glucose4(incr=True)
+        self.model_builds += 1
+        self._progress('encoding')
         piece_vars = [[] for _ in range(count)]
         for cell, domain in enumerate(problem.domains):
-            budget.check()
+            self.check()
             exterior = (cell < size, cell % size == size - 1,
                         cell >= count - size, cell % size == 0)
-            placements = []
-            seen = set()
+            placements, seen = [], set()
             for index, state in enumerate(domain):
                 if index % 256 == 0:
-                    budget.check()
+                    self.check()
                 if type(state) is not int or not 0 <= state < len(faces):
                     raise ValueError('Invalid state in cell domain')
                 if state in seen:
@@ -167,90 +235,200 @@ def solve(problem, seconds=30.0, seed=0, workers=1, should_stop=None, on_progres
                     continue
                 if any((color == 0) != boundary for color, boundary in zip(faces[state], exterior)):
                     continue
-                literal = new_var()
+                literal = self._new_var()
                 placements.append((state, literal))
                 piece_vars[state // 4].append(literal)
-            cell_vars.append(placements)
-            exactly_one([literal for _, literal in placements])
+            self.cell_vars.append(placements)
+            self._exactly_one([literal for _, literal in placements])
         for literals in piece_vars:
-            budget.check()
-            exactly_one(literals)
+            self.check()
+            self._exactly_one(literals)
         for a, b, sa, sb in constraint_edges(problem):
-            budget.check()
+            self.check()
             if not (0 <= a < count and 0 <= b < count and 0 <= sa < 4 and 0 <= sb < 4):
                 raise ValueError('Invalid constrained edge')
-            common = sorted({faces[s][sa] for s, _ in cell_vars[a]} &
-                            {faces[s][sb] for s, _ in cell_vars[b]})
+            common = sorted({faces[s][sa] for s, _ in self.cell_vars[a]} &
+                            {faces[s][sb] for s, _ in self.cell_vars[b]})
             if not common:
                 raise _Infeasible()
-            channels = {color: new_var() for color in common}
-            at_most_one(list(channels.values()))
-            # A selected endpoint supplies the at-least-one side implicitly.
+            channels = {color: self._new_var() for color in common}
+            self._at_most_one(list(channels.values()))
             for cell, side in ((a, sa), (b, sb)):
-                for state, literal in cell_vars[cell]:
-                    channel = channels.get(faces[state][side])
-                    add([-literal, channel] if channel is not None else [-literal])
-        budget.check()
-        rng = random.Random(seed)
+                support = {color: [] for color in common}
+                for state, literal in self.cell_vars[cell]:
+                    color = faces[state][side]
+                    channel = channels.get(color)
+                    self._add([-literal, channel] if channel is not None else [-literal])
+                    if channel is not None:
+                        support[color].append(literal)
+                if self.reverse_support:
+                    for color, literals in support.items():
+                        self._add([-channels[color], *literals])
+        rng = random.Random(self.seed)
         phases = []
-        for placements in cell_vars:
-            budget.check()
+        for placements in self.cell_vars:
+            self.check()
             phases.extend(literal if rng.getrandbits(1) else -literal for _, literal in placements)
-        native.set_phases(phases)
-        budget.check()
-        build_seconds = time.monotonic() - budget.started
-        progress('searching')
+        self.native.set_phases(phases)
+        self.placements = [dict(values) for values in self.cell_vars]
+        self.check()
+        self._built = True
 
-        def interrupt_if_needed():
-            while not done.wait(0.01):
-                if budget.reason():
-                    native.interrupt()
-                    return
+    def _assumptions(self, assumptions):
+        if assumptions is None:
+            return None
+        if not isinstance(assumptions, dict):
+            raise ValueError('assumptions must map cells to oriented states')
+        if any(type(c) is not int or not 0 <= c < self.problem.size ** 2 or
+               type(s) is not int or not 0 <= s < len(self.problem.faces) for c, s in assumptions.items()):
+            raise ValueError('Invalid assumed placement')
+        return dict(assumptions)
 
-        monitor = threading.Thread(target=interrupt_if_needed, name='eternity-sat-interrupt', daemon=True)
-        monitor.start()
-        satisfiable = native.solve_limited(expect_interrupt=True)
-        done.set()
-        monitor.join()
-        budget.check()
-        if satisfiable is None:
-            outcome = 'timeout'
-        elif satisfiable is False:
-            outcome = 'infeasible'
-        else:
-            model = native.get_model()
-            budget.check()
-            selected = {literal for literal in model if literal > 0}
-            candidate = []
-            for placements in cell_vars:
-                budget.check()
-                states = [state for state, literal in placements if literal in selected]
-                if len(states) != 1:
-                    raise RuntimeError('SAT model did not select exactly one state per cell')
-                candidate.append(states[0])
-            if not check_solution(problem, candidate):
-                raise RuntimeError('SAT result failed independent exact-board validation')
-            budget.check()
-            board = candidate
-            outcome = 'solved'
-    except _Cancelled as exc:
-        outcome = exc.outcome
-    except _Infeasible:
-        # A late stop/timeout takes precedence over a preprocessing contradiction.
-        outcome = budget.reason() or 'infeasible'
-    finally:
-        done.set()
-        if monitor is not None:
+    def solve(self, assumptions=None, *, seconds=None):
+        assumptions = self._assumptions(assumptions)
+        if seconds is not None:
+            seconds = _seconds(seconds)
+        with self._lock:
+            with self._lifecycle_lock:
+                if self.closed or self._closing.is_set():
+                    raise RuntimeError('SAT session is closed')
+                if self._active_query:
+                    raise RuntimeError('SAT session query is already active')
+                self._active_query = True
+            try:
+                return self._solve_locked(assumptions, seconds)
+            finally:
+                with self._lifecycle_lock:
+                    self._active_query = False
+                    if self._closing.is_set():
+                        self._dispose()
+
+    def _solve_locked(self, assumptions, seconds):
+        self._query_outcome = None
+        started = time.monotonic()
+        self._query_deadline = self.budget.deadline if seconds is None else min(self.budget.deadline, started + seconds)
+        self.queries += 1
+        before = {} if self.native is None else self.native.accum_stats() or {}
+        stats = dict(before)
+        outcome, board, core = 'timeout', None, None
+        done, monitor = threading.Event(), None
+        selectors = {}
+        build_started = time.monotonic()
+        build_seconds = None
+        try:
+            self.check()
+            if not self._built:
+                self._build()
+            if self._base_unsat:
+                raise _Infeasible()
+            if assumptions is not None:
+                for cell, state in sorted(assumptions.items()):
+                    self.check()
+                    key = (cell, state)
+                    selector = self.selectors.get(key)
+                    if selector is None:
+                        selector = self._new_var()
+                        literal = self.placements[cell].get(state)
+                        self._add([-selector, literal] if literal is not None else [-selector])
+                        self.selectors[key] = selector
+                    selectors[selector] = key
+            self.check()
+            build_seconds = time.monotonic() - build_started
+            self._progress('searching')
+            # Real PySAT supports this. getattr keeps existing injected
+            # one-query test solvers compatible with the public wrapper.
+            clear = getattr(self.native, 'clear_interrupt', None)
+            if clear is not None:
+                clear()
+            self.check()
+            def interrupt_if_needed():
+                while not done.wait(.01):
+                    if self._reason():
+                        self.native.interrupt()
+            monitor = threading.Thread(target=interrupt_if_needed, name='eternity-sat-interrupt', daemon=True)
+            monitor.start()
+            if assumptions is None:
+                satisfiable = self.native.solve_limited(expect_interrupt=True)
+            else:
+                satisfiable = self.native.solve_limited(assumptions=list(selectors), expect_interrupt=True)
+            done.set()
             monitor.join()
-        if build_seconds is None:
-            build_seconds = time.monotonic() - budget.started
-        if native is not None:
-            stats = native.accum_stats() or {}
-            native.delete()
-    if budget.callback_error is not None:
-        raise RuntimeError('SAT cancellation callback failed') from budget.callback_error
-    return {'outcome': outcome, 'board': board, 'backend': backend,
-            'branches': int(stats.get('decisions', 0)), 'conflicts': int(stats.get('conflicts', 0)),
-            'elapsed_seconds': time.monotonic() - budget.started, 'build_seconds': build_seconds,
-            'variables': next_var, 'clauses': clause_count, 'workers': 1,
-            'requested_workers': workers, 'seed': seed, 'seed_policy': 'initial-placement-phases'}
+            self.check()
+            if satisfiable is False:
+                outcome = 'infeasible'
+                if assumptions is not None:
+                    raw_core = self.native.get_core() or []
+                    if any(literal not in selectors for literal in raw_core):
+                        raise RuntimeError('SAT returned an unknown assumption in its core')
+                    core = sorted(selectors[literal] for literal in raw_core)
+            elif satisfiable is True:
+                from exact_model import check_solution
+                selected = {literal for literal in self.native.get_model() if literal > 0}
+                candidate = []
+                for placements in self.cell_vars:
+                    self.check()
+                    states = [state for state, literal in placements if literal in selected]
+                    if len(states) != 1:
+                        raise RuntimeError('SAT model did not select exactly one state per cell')
+                    candidate.append(states[0])
+                if not check_solution(self.problem, candidate) or any(candidate[c] != s for c, s in (assumptions or {}).items()):
+                    raise RuntimeError('SAT result failed independent exact-board/assumption validation')
+                self.check()
+                board, outcome = candidate, 'solved'
+            # None means unknown; never inspect a stale model/core.
+        except _Cancelled as exc:
+            outcome = exc.outcome
+        except _Infeasible:
+            self._base_unsat = self._built = True
+            outcome = self._reason() or 'infeasible'
+            if outcome == 'infeasible' and assumptions is not None:
+                core = []
+        finally:
+            done.set()
+            if monitor is not None:
+                monitor.join()
+            if build_seconds is None:
+                build_seconds = time.monotonic() - build_started
+            self.total_build_seconds += build_seconds
+            if self.native is not None:
+                stats = self.native.accum_stats() or {}
+                if not self._built:
+                    # An interrupted partial CNF is not a reusable model.
+                    self.native.delete()
+                    self.native = None
+                    self.next_var = self.clause_count = 0
+                    self.cell_vars, self.placements, self.selectors = [], [], {}
+        if self.budget.callback_error is not None:
+            raise RuntimeError('SAT cancellation callback failed') from self.budget.callback_error
+        return {'outcome': outcome, 'board': board, 'backend': 'pysat-glucose4',
+                'branches': max(0, int(stats.get('decisions', 0)) - int(before.get('decisions', 0))),
+                'conflicts': max(0, int(stats.get('conflicts', 0)) - int(before.get('conflicts', 0))),
+                'cumulative_branches': int(stats.get('decisions', 0)),
+                'cumulative_conflicts': int(stats.get('conflicts', 0)),
+                'elapsed_seconds': time.monotonic() - started, 'build_seconds': build_seconds,
+                'session_elapsed_seconds': time.monotonic() - self.budget.started,
+                'session_build_seconds': self.total_build_seconds,
+                'model_builds': self.model_builds, 'assumption_queries': self.queries,
+                'variables': self.next_var, 'clauses': self.clause_count, 'workers': 1,
+                'requested_workers': self.requested_workers, 'seed': self.seed,
+                'seed_policy': 'initial-placement-phases', 'reverse_support': self.reverse_support,
+                'core_cells': None if core is None else [cell for cell, _ in core],
+                'core_placements': None if core is None else dict(core),
+                'proof_scope': 'supplied-constraints-with-assumptions' if assumptions is not None else 'supplied-constraints'}
+
+
+def solve(problem, seconds=30.0, seed=0, workers=1, should_stop=None, on_progress=None,
+          *, reverse_support=True, assumptions=None):
+    """Single-query compatibility wrapper; use AssumptionSession to retain CNF."""
+    with AssumptionSession(problem, seconds, seed, workers, should_stop, on_progress,
+                           reverse_support=reverse_support) as session:
+        return session.solve(assumptions)
+
+
+def solve_with_assumptions(problem, assumptions, **kwargs):
+    """Temporary freezes; core is None unless this query proves infeasibility.
+
+    An empty UNSAT core means the base supplied constraints are inconsistent.
+    Explicit regional edges retain their narrower scope.
+    """
+    return solve(problem, assumptions=assumptions, **kwargs)

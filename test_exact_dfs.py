@@ -369,7 +369,7 @@ class ExactDfsTests(unittest.TestCase):
         problem, answer = generated_problem(2, 2, 17)
         hints = [answer, [0] * 4]
         saved = solve(problem, seconds=0, seed=7, hints=hints)['checkpoint']
-        self.assertEqual(saved['version'], 2)
+        self.assertEqual(saved['version'], exact_dfs.CHECKPOINT_VERSION)
         self.assertEqual(saved['ordering_version'], exact_dfs.ORDERING_VERSION)
         self.assertEqual(saved['problem_hash'], exact_dfs.problem_hash(problem))
         result = solve(problem, seconds=2, seed=7, hints=tuple(tuple(b) for b in hints), checkpoint=saved)
