@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eternity-ii-solver"
-version = "0.3.0"
+version = "0.3.1"
 description = "Local GPU repair and exact constraint search for the five-clue Eternity II puzzle"
 readme = "README.md"
 requires-python = ">=3.11"

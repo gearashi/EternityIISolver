@@ -12,7 +12,7 @@ The [bounded sampler tests](docs/EXACT_SEARCH.md#measured-gpu-sampling-9-october
 
 BOINC-compatible worker development and the GPU DFS port remain **on hold**. Standalone CPU exact search does not execute assigned production tickets or submit results. The read-only workunit inspector remains available for examining saved inputs.
 
-**Library behavior retained from v0.2.2:** v0.2.2 replaces v0.2.1's optional background library downloads with a manual **Download and merge** button. Opening the app never starts a library download, and old automatic-download settings are ignored. Existing caches and search state are retained. Version 0.3.0 adds the experimental search methods described below; no better puzzle solution is claimed.
+**Library behavior retained from v0.2.2:** v0.2.2 replaces v0.2.1's optional background library downloads with a manual **Download and merge** button. Opening the app never starts a library download, and old automatic-download settings are ignored. Existing caches and search state are retained. Version 0.3.1 adds the experimental search methods described below; no better puzzle solution is claimed.
 
 ## Download and start
 
@@ -82,7 +82,7 @@ python -m pip install ".[cuda]"
 eternity-solver open
 ```
 
-A GitHub release wheel can also be installed with `python -m pip install path/to/eternity_ii_solver-0.3.0-py3-none-any.whl` when that release is available. The core dependencies include OR-Tools 9.15 and python-sat; no separate exact-search extra is required. Install the CUDA extra from the source checkout if desired. Search and manual export work offline. Requested library-archive downloads, release/dependency downloads, and opening external documentation require internet access. The repository is not claimed to be published on PyPI.
+A GitHub release wheel can also be installed with `python -m pip install path/to/eternity_ii_solver-0.3.1-py3-none-any.whl` when that release is available. The core dependencies include OR-Tools 9.15 and python-sat; no separate exact-search extra is required. Install the CUDA extra from the source checkout if desired. Search and manual export work offline. Requested library-archive downloads, release/dependency downloads, and opening external documentation require internet access. The repository is not claimed to be published on PyPI.
 
 PyOpenCL and a hardware-vendor OpenCL implementation are separate requirements. A successful Python installation alone does not supply an AMD/Intel/NVIDIA GPU driver. See [PyOpenCL installation](https://documen.tician.de/pyopencl/misc.html#installation) and [CuPy installation](https://docs.cupy.dev/en/stable/install.html) for supported runtime configurations.
 
@@ -114,7 +114,7 @@ A project message supplied by the user reports that the project's tested GPU DFS
 
 ## Experimental search improvements
 
-Version 0.3.0 adds selectable strong/adaptive DFS pruning, dynamic parallel DFS partitions, incremental SAT and CP-SAT score optimization, conflict-core hitting-set repair, GPU-batched matching costs and exact cycle board repair. GPU matching uses a separate neighborhood batch control; the CPU performs exact assignments and validation. See [smart-search methods and evidence](docs/SMART_SEARCH.md). These are measured experiments, not a claim of a 480 solution or a universal speedup. The ordinary GPU solver remains available. All workers run offline; only manual archive downloads contact the library.
+Version 0.3.1 adds selectable strong/adaptive DFS pruning, dynamic parallel DFS partitions, incremental SAT and CP-SAT score optimization, conflict-core hitting-set repair, GPU-batched matching costs and exact cycle board repair. GPU matching uses a separate neighborhood batch control; the CPU performs exact assignments and validation. See [smart-search methods and evidence](docs/SMART_SEARCH.md). These are measured experiments, not a claim of a 480 solution or a universal speedup. The ordinary GPU solver remains available. All workers run offline; only manual archive downloads contact the library.
 
 ## Search and validation
 

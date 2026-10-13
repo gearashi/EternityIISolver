@@ -13,7 +13,7 @@ import webbrowser
 from app_paths import resource_root, state_root
 from process_control import read_status
 
-VERSION = '0.3.0'
+VERSION = '0.3.1'
 
 
 class _NoLocalRedirect(urllib.request.HTTPRedirectHandler):

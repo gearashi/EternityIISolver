@@ -198,7 +198,7 @@ class SmartIntegrationTests(unittest.TestCase):
         queue = self.runtime / 'exact-partitioned-queue.json'
         queue.write_text('original frontier')
         def incompatible(**kwargs):
-            self.assertEqual(kwargs['queue_path'], queue)
+            self.assertEqual(kwargs['queue_path'], queue.resolve())
             raise ValueError('Fixture profile mismatch')
         self.assertEqual(self.run_fake('partitioned', incompatible, workers=4), 1)
         self.assertEqual(queue.read_text(), 'original frontier')

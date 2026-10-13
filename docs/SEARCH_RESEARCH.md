@@ -159,3 +159,13 @@ diagnostic command, never by dashboard/search execution. Source and frozen Linux
 PoCL checks now exercise the new assignment kernel against the scalar CPU oracle.
 After this addition, all 390 source tests passed in 152.833 seconds and all 7 BOINC
 validator tests passed in 0.075 seconds. Version consistency again passed for v0.3.0.
+
+## Cross-platform release correction
+
+The v0.3.0 release gate correctly blocked publication when one integration-test
+fixture compared a resolved queue path with an unresolved alias. macOS maps /var
+to /private/var, and the Windows runner used its short username path. Both names
+identified the same file; all other 389 tests passed on each affected runner. The
+fixture now compares canonical paths, retaining its queue-identity and preservation
+assertions. Solver code is unchanged. Version 0.3.1 carries this correction rather
+than moving the already-pushed v0.3.0 tag. All platform gates must pass again.

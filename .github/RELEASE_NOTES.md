@@ -1,4 +1,4 @@
-Version **0.3.0** adds optional search and repair methods while preserving the original pieces, gray frame and all five fixed clue orientations. No 480/480 solution or faster route to a full solution is claimed. The best verified board in the bundled data remains 466.
+Version **0.3.1** adds optional search and repair methods while preserving the original pieces, gray frame and all five fixed clue orientations. No 480/480 solution or faster route to a full solution is claimed. The best verified board in the bundled data remains 466.
 
 ### Search methods
 
