@@ -18,6 +18,9 @@ Only explicit manual library archive downloads may access the project. No upload
 | Adaptive optional DFS pruning | Implemented; checkpoint replay audit passed | Baseline/strong/full/adaptive ablation below |
 | Dynamic disjoint DFS splitting | Implemented; finite partition/ownership tests pass | Independent exhaustive frontier audit passed; full scaling unmeasured |
 | Incremental SAT score bounds | Implemented; tiny exhaustive threshold tests pass | Full-puzzle setup/query comparison below |
+| Structured plateau escapes | Implemented; legal-move/tabu/incumbent tests pass | Working parents can worsen; saved best is separate |
+| Diverse library parents | Implemented; validated read-only seeded selection | Modest diversity change; selection overhead measured below |
+| Adjacent-region score repair | Implemented; exhaustive tiny-region oracles pass | Compact one-worker CP-SAT targets best+1 with frozen complement |
 | GPU batched matching costs | Implemented; scalar CPU oracle tests pass | CUDA/OpenCL original-board comparisons below |
 | Component binary recombination | Implemented; exact small oracles pass | Same parent-pair comparison below |
 | Actual piece rotation symmetry | Closed for this inventory:256 distinct rotation classes, no repeated rotations | [Finite audit](evidence/inventory-symmetry-20261013.json); no reduction applicable |
@@ -169,3 +172,85 @@ identified the same file; all other 389 tests passed on each affected runner. Th
 fixture now compares canonical paths, retaining its queue-identity and preservation
 assertions. Solver code is unchanged. Version 0.3.1 carries this correction rather
 than moving the already-pushed v0.3.0 tag. All platform gates must pass again.
+
+## Three additional structured repair methods (local preview 0.3.2.dev1)
+
+The previously identified diversification, cached-parent diversity and adjacent
+score-target region operators are implemented and enabled together in the
+matching/GPU-matching portfolio. Unit/integration coverage includes legal
+working-board degradation without incumbent degradation, recent-board tabu,
+read-only seeded cache selection, donor-pool uniqueness, frame/clue/domain
+preservation, regional objective equality with exhaustive tiny-case oracles,
+input-size bounds and native cancellation cleanup. The exact diagnostic command
+also executes all three operators in a packaged process.
+
+The initial full suite passed 424 tests; affected follow-up suites passed after
+bounded iterator and preparation-budget checks. Seven BOINC result-validator
+regressions passed; these tests do not execute any external project app.
+
+The first six 15-second CUDA runs were dominated by initialization and host work.
+They retained 466 and completed only 16–62 neighborhoods (1–4 batches), which
+never reached the default regional/diversification thresholds. Their startup
+behavior is recorded in [the cold report](evidence/repair-portfolio-startup-20261013.json)
+and [its exact sources](evidence/repair-portfolio-startup-20261013.sources.zip).
+They validate returned boards and resource/state handling, not the efficacy of
+operators that did not activate. The follow-up comparison records warm-up
+separately and keeps default thresholds and the 32-parent selection limit.
+
+The warmed comparison used two seeds in reversed mode order, each with 45
+seconds of search after separately reported GPU/native warm-up. Both combinations
+ran the new diversification and regional operators. All six final boards validated
+at 466. All reported application network-attempt lists were empty; the protected
+runtime files and local cache hashes were unchanged.
+
+| Mode | Seed | Cached parents | Matching neighborhoods | Diversifications | Region searches | Best |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| baseline | 17 | 32 | 334 | 0 | 0 | 466 |
+| diverse-only | 17 | 32 | 222 | 0 | 0 | 466 |
+| combined | 17 | 0 | 448 | 3 | 3 | 466 |
+| combined | 41 | 32 | 334 | 23 | 2 | 466 |
+| diverse-only | 41 | 32 | 382 | 0 | 0 | 466 |
+| baseline | 41 | 32 | 414 | 0 | 0 | 466 |
+
+[Warm report](evidence/repair-portfolio-warm-20261013.json) and
+[exact measured sources](evidence/repair-portfolio-warm-20261013.sources.zip).
+The combined seed-17 run exhausted the five-second parent-preparation budget
+before decoding any cached boards, so it ran from the reference alone. Its higher
+neighborhood count cannot be attributed to improved search quality or directly
+compared with 32-parent cases. Selection's metadata-first scheduling was therefore
+returned to implementation for a bounded elite-first fix. The other cases also
+show substantial desktop timing variation. These runs establish activation and
+validated outputs in their tested bounds, not a faster route to 467 or 480.
+
+The preparation fix now validates up to eight elites before optional reservoir
+sampling and reserves half of the remaining budget for validation/selection.
+A scan-only timeout does not poison subsequent point reads; a global timeout
+returns previously validated candidates. Twelve selector tests passed, including
+fake-clock scan/global-deadline checks. The read-only actual-cache follow-up
+returned 32 independently validated parents, including a 466 elite, for seeds 17/41
+in 3.125s/3.562s. Protected runtime/database/WAL hashes stayed unchanged.
+[Parent-budget evidence](evidence/repair-parent-budget-20261013.json).
+
+
+The final CUDA confirmation used the repaired selector and loaded 32 parents in
+4.812 seconds. It completed 302 matching neighborhoods, 22 diversifications and
+two regional searches; the independently verified best stayed at 466. Search took
+46.485 seconds against a cooperative 45-second budget; the process stayed within
+its external 75-second limit. Source hashes, all 12 protected runtime files and
+network-attempt checks passed. The report's aggregate `passed: false` is retained:
+the library database/WAL changed while the user independently imported the latest
+archive through the dashboard. The user confirmed this import, which added 15,957
+boards (137,434 known arrangements afterward). No benchmark socket attempts were
+recorded. The new boards were preserved; a subsequent read-only check selected
+32 valid parents and confirmed that source, runtime and post-import cache hashes
+stayed unchanged. Its 8.594-second total includes independent validation after
+parent selection; it is not a parent-selection-only timing.
+
+[Final GPU report](evidence/repair-portfolio-final-20261013.json),
+[exact sources](evidence/repair-portfolio-final-20261013.sources.zip),
+[post-import cache check](evidence/repair-cache-post-import-20261013.json) and
+[computation manifest](evidence/repair-portfolio-manifest.json) preserve these
+results and their limits. Desktop contention and short runs prevent a reliable
+speed ranking. The tests establish bounded correctness and operator activation,
+not faster time to 480 or global infeasibility. This is a local Windows preview;
+the published 0.3.1 release remains available for rollback.

@@ -114,6 +114,8 @@ A project message supplied by the user reports that the project's tested GPU DFS
 
 ## Experimental search improvements
 
+The 0.3.2.dev1 local preview adds diverse cached parents, plateau escapes and connected-region score repair to the structured matching engines. These additions activate automatically in **Advanced search → GPU costs + CPU matching** (or its CPU matching counterpart). See [details and bounded evidence](docs/SMART_SEARCH.md).
+
 Version 0.3.1 adds selectable strong/adaptive DFS pruning, dynamic parallel DFS partitions, incremental SAT and CP-SAT score optimization, conflict-core hitting-set repair, GPU-batched matching costs and exact cycle board repair. GPU matching uses a separate neighborhood batch control; the CPU performs exact assignments and validation. See [smart-search methods and evidence](docs/SMART_SEARCH.md). These are measured experiments, not a claim of a 480 solution or a universal speedup. The ordinary GPU solver remains available. All workers run offline; only manual archive downloads contact the library.
 
 ## Search and validation

@@ -5,13 +5,9 @@ chooses whole components of two cell/piece permutations, retaining uniqueness.
 """
 from __future__ import annotations
 from dataclasses import replace
-from contextlib import closing
 import math
 import itertools
-from pathlib import Path
 import random
-import sqlite3
-import struct
 import threading
 import time
 from exact_model import check_solution, constraint_edges, grid_edges
@@ -277,32 +273,27 @@ def cycle_recombine(problem, parent_a, parent_b, *, seconds=1.0, seed=0,
                 branches=solver.num_branches,cycle_backend='cp-sat')
 
 
-def cached_parents(problem, database, *, limit=32):
-    """Read a bounded selection from the local cache, with no cache mutations."""
-    if type(limit) is not int or not 1<=limit<=256: raise ValueError('limit must be 1..256')
-    database=Path(database)
-    if not database.is_file(): return []
-    result=[]
-    with closing(sqlite3.connect(database.resolve().as_uri()+'?mode=ro',uri=True,timeout=1)) as db:
-        for (blob,) in db.execute('SELECT placement FROM boards WHERE placement IS NOT NULL ORDER BY score DESC,public_sha LIMIT ?', (limit,)):
-            if not isinstance(blob,bytes) or len(blob)!=2*problem.size**2: continue
-            board=list(struct.unpack('<'+str(problem.size**2)+'H',blob))
-            if structurally_valid(problem,board) and board not in result: result.append(board)
-    return result
-
+def cached_parents(problem, database, *, limit=32, seed=0, should_stop=None, **options):
+    """Validated, diverse local parents; the cache is always opened read-only."""
+    from repair_parents import cached_parents as select_parents
+    return select_parents(problem, database, limit=limit, seed=seed,
+                          should_stop=should_stop, **options)
 
 
 def solve(problem, reference, *, seconds=60, seed=0, workers=1, parents=None,
           should_stop=None, on_improvement=None, on_progress=None,
-          gpu_backend=None, gpu_batch_size=16, gpu_cache_dir=None, gpu_allow_cpu_fallback=False, bulk_arcs=True):
-    """Interruptible portfolio of exact repair neighborhoods, not exhaustive DFS.
+          gpu_backend=None, gpu_batch_size=16, gpu_cache_dir=None, gpu_allow_cpu_fallback=False,
+          bulk_arcs=True, diversify=True, plateau_rounds=8,
+          region_repair_enabled=True, region_every=8, region_seconds=.25):
+    """Bounded structured repair with diversification and score-target regions.
 
-    Stops at the supplied time limit or cancellation. A timeout, plateau or
-    exhausted parent neighborhood says nothing about full-puzzle feasibility.
-    Parent preparation and backend imports consume the same wall budget.
-    Callbacks and parent iterators must return promptly. At most 64 supplied
-    parents are inspected, including duplicate or invalidly repeated entries.
+    Only working parents may lose score. The independently checked best-ever
+    board is copied separately and callbacks receive only strict improvements.
+    A failed region applies only to its frozen complement, never the full puzzle.
+    Optional switches support reproducible ablations; all three operators are
+    enabled in the normal matching and GPU-matching worker modes.
     """
+    from collections import deque
     start=time.monotonic()
     if workers != 1 or type(workers) is not int:
         raise ValueError('Matching repair uses one CPU worker')
@@ -312,16 +303,24 @@ def solve(problem, reference, *, seconds=60, seed=0, workers=1, parents=None,
         raise ValueError('seed must be a uint32 integer')
     for name,callback in (('should_stop',should_stop),('on_improvement',on_improvement),('on_progress',on_progress)):
         if callback is not None and not callable(callback): raise ValueError(name+' must be callable')
-    if type(bulk_arcs) is not bool: raise ValueError('bulk_arcs must be boolean')
+    for name,value in (('bulk_arcs',bulk_arcs),('diversify',diversify),
+                       ('region_repair_enabled',region_repair_enabled),
+                       ('gpu_allow_cpu_fallback',gpu_allow_cpu_fallback)):
+        if type(value) is not bool: raise ValueError(name+' must be boolean')
+    for name,value in (('plateau_rounds',plateau_rounds),('region_every',region_every)):
+        if type(value) is not int or not 1<=value<=1024: raise ValueError(name+' must be 1..1024')
+    if type(region_seconds) not in (int,float) or not math.isfinite(region_seconds) or not 0<region_seconds<=5:
+        raise ValueError('region_seconds must be positive and at most 5')
     if gpu_backend not in (None,'auto','cuda','opencl'):
         raise ValueError('gpu_backend must be None, auto, cuda or opencl')
     if type(gpu_batch_size) is not int or not 1<=gpu_batch_size<=64:
         raise ValueError('gpu_batch_size must be 1..64 independent neighborhoods')
-    if type(gpu_allow_cpu_fallback) is not bool: raise ValueError('gpu_allow_cpu_fallback must be boolean')
     _require(problem,reference)
     deadline=start+seconds;rng=random.Random(seed)
     best=list(reference);best_score=score(problem,best);initial=best_score
-    bank=[best];seen=set();completed=0;cycle_calls=0;rounds=0
+    bank=[best.copy()];seen=set();completed=0;cycle_calls=0;rounds=0;batches=0
+    counts=dict(diversification_attempts=0,diversifications=0,tabu_rejections=0,
+                region_calls=0,region_improvements=0,region_seconds=0.)
     max_score=len(grid_edges(problem.size));last_progress=float('-inf')
     def stopped(): return bool(should_stop and should_stop())
     def ended(): return stopped() or time.monotonic()>=deadline
@@ -342,63 +341,121 @@ def solve(problem, reference, *, seconds=60, seed=0, workers=1, parents=None,
             best,best_score=list(candidate),value
             if on_improvement:
                 on_improvement({'board':best.copy(),'score':value,'elapsed_seconds':time.monotonic()-start,
-                                'backend':'exact-matching-and-cycle-repair','branches':None,'conflicts':None})
+                                'backend':'structured-repair-portfolio','branches':None,'conflicts':None})
         return value
     if not ended():
-        # islice bounds duplicate streams too; limiting the number of distinct
-        # boards alone could consume an unbounded repeating parent iterator.
         for parent in itertools.islice(parents or (),64):
             if ended(): break
             _require(problem,parent)
             if parent not in bank: bank.append(list(parent))
             if len(bank)>=64: break
-    # Cached parents can improve a stale local incumbent. That is reuse, not
-    # discovery; the worker retains local-cache provenance for saved boards.
     for board in bank:
         if ended(): break
         accept(board)
+    bank_scores=[score(problem,b) for b in bank]
+    peaks=list(bank_scores);stalls=[0]*len(bank)
+    recent=[deque([tuple(b)],maxlen=12) for b in bank]
+    diversifier=None
+    def progress(phase='matching_and_cycle_repair', force=False):
+        nonlocal last_progress
+        now=time.monotonic()
+        if on_progress and (force or now-last_progress>=.25):
+            last_progress=now
+            on_progress({'phase':phase,'neighborhoods':completed,'recombinations':cycle_calls,
+                         'best_score':best_score,'elapsed_seconds':now-start,'parent_count':len(bank),
+                         'backend':'GPU costs + CPU matching, cycles and regions'
+                         if evaluator is not None and evaluator.backend in ('cuda','opencl')
+                         else 'CPU matching, cycles and regions',**counts,**cost_stats()})
     while not ended() and best_score<max_score:
-        pending=[];pending_keys=set()
+        pending=[];pending_keys=set();touched=set();advanced=set();batches+=1
         for _ in range(gpu_batch_size if evaluator is not None else 1):
             if ended(): break
-            index=rounds%len(bank);parent=bank[index]
+            index=rounds%len(bank);parent=bank[index];touched.add(index)
             cells=independent_cells(problem,seed=rng.randrange(2**32),
                                     parity=(rounds//len(bank))%2 if rounds<2*len(bank) else None)
             key=(tuple(parent),tuple(cells));rounds+=1
             if key not in seen and key not in pending_keys:
                 pending.append((index,parent,cells,key));pending_keys.add(key)
-        if not pending: continue
-        if evaluator is None:
-            repaired_list=[assignment_repair(problem,pending[0][1],pending[0][2],should_stop=ended,bulk_arcs=bulk_arcs)]
-        else:
-            from gpu_assignment import AssignmentCancelled
-            try:
-                repaired_list=assignment_repair_batch(problem,[(parent,cells) for _,parent,cells,_ in pending],
-                                                     evaluator=evaluator,should_stop=ended,bulk_arcs=bulk_arcs)
-            except AssignmentCancelled: break
-        for (index,parent,cells,key),repaired in zip(pending,repaired_list):
-            if repaired['optimal']:
-                completed+=1;seen.add(key)
-                if len(seen)>4096: seen.clear()
-                if repaired['score']>=score(problem,bank[index]): bank[index]=repaired['board']
-                accept(repaired['board'])
-        if rounds%4==0 and len(bank)>1 and not ended():
-            other=bank[rng.randrange(len(bank))]
-            combined=cycle_recombine(problem,best,other,seconds=min(.25,max(0,deadline-time.monotonic())),
+        def adopt(index,candidate):
+            value=accept(candidate)
+            key=tuple(candidate)
+            if key==tuple(bank[index]): return
+            # A strict new local record overrides tabu (aspiration). Tabu only
+            # steers working parents; it never suppresses a verified global best.
+            if diversify and key in recent[index] and value<=peaks[index]:
+                counts['tabu_rejections']+=1;return
+            if value>=bank_scores[index]:
+                bank[index]=list(candidate);bank_scores[index]=value;recent[index].append(key)
+                if value>peaks[index]:
+                    peaks[index]=value;advanced.add(index)
+        repaired_list=[]
+        if pending:
+            if evaluator is None:
+                repaired_list=[assignment_repair(problem,pending[0][1],pending[0][2],should_stop=ended,bulk_arcs=bulk_arcs)]
+            else:
+                from gpu_assignment import AssignmentCancelled
+                try:
+                    repaired_list=assignment_repair_batch(problem,[(parent,cells) for _,parent,cells,_ in pending],
+                                                         evaluator=evaluator,should_stop=ended,bulk_arcs=bulk_arcs)
+                except AssignmentCancelled: break
+            for (index,parent,cells,key),repaired in zip(pending,repaired_list):
+                if repaired['optimal']:
+                    completed+=1;seen.add(key)
+                    if len(seen)>4096: seen.clear()
+                    adopt(index,repaired['board'])
+        if rounds%4==0 and len(bank)>1 and not ended() and best_score<max_score:
+            index=rng.randrange(len(bank))
+            combined=cycle_recombine(problem,best,bank[index],seconds=min(.25,max(0,deadline-time.monotonic())),
                                      seed=rng.randrange(2**31),should_stop=ended)
-            cycle_calls+=1;accept(combined['board'])
-            if combined['score']>score(problem,bank[index]): bank[index]=combined['board']
-        now=time.monotonic()
-        if on_progress and now-last_progress>=.25:
-            last_progress=now
-            on_progress({'phase':'matching_and_cycle_repair','neighborhoods':completed,'recombinations':cycle_calls,
-                         'best_score':best_score,'elapsed_seconds':now-start,
-                         'backend':'GPU costs + CPU matching + cycle choices' if evaluator is not None and evaluator.backend in ('cuda','opencl') else 'CPU matching + cycle choices',
-                         **cost_stats()})
+            cycle_calls+=1;adopt(index,combined['board']);touched.add(index)
+        # All pending GPU snapshots are consumed before any intentional worsening.
+        for index in sorted(touched):
+            stalls[index]=0 if index in advanced else stalls[index]+1
+            if not diversify or stalls[index]<plateau_rounds or ended() or best_score==max_score: continue
+            if diversifier is None:
+                from repair_diversify import Diversifier
+                diversifier=Diversifier(problem)
+            counts['diversification_attempts']+=1
+            changed=diversifier.perturb(bank[index],seed=rng.randrange(2**32),
+                        moves=2+(counts['diversification_attempts']%7),
+                        forbidden_boards=recent[index],should_stop=ended)
+            stalls[index]=0
+            if changed['changed']:
+                counts['diversifications']+=1
+                bank[index]=list(changed['board']);bank_scores[index]=accept(bank[index])
+                recent[index].append(tuple(bank[index]))
+                peaks[index]=max(peaks[index],bank_scores[index])
+        if region_repair_enabled and batches%region_every==0 and not ended() and best_score<max_score:
+            # At most one short region per interval and about 20% of elapsed
+            # time in this CPU operator, so GPU matching retains its role.
+            allowance=min(region_seconds, deadline-time.monotonic(),
+                          max(0., .2*(time.monotonic()-start)-counts['region_seconds']))
+            if allowance>=.02:
+                from repair_regions import select_region, region_repair
+                region_started=time.monotonic();region_deadline=region_started+allowance
+                def region_stop(): return ended() or time.monotonic()>=region_deadline
+                cells=select_region(problem,best,seed=rng.randrange(2**32),
+                                    region_size=8+4*(counts['region_calls']%4),
+                                    donor_count=2+2*((counts['region_calls']//4)%3),should_stop=region_stop)
+                if cells and not region_stop():
+                    counts['region_calls']+=1
+                    progress('connected_region_repair',force=True)
+                    result=region_repair(problem,best,cells,seconds=max(0.,region_deadline-time.monotonic()),
+                                         seed=rng.randrange(2**31),should_stop=region_stop)
+                    previous=best_score;accept(result['board'])
+                    if best_score>previous:
+                        counts['region_improvements']+=1
+                        # Feed a regional improvement back into GPU matching.
+                        index=min(range(len(bank)),key=bank_scores.__getitem__)
+                        bank[index]=best.copy();bank_scores[index]=best_score
+                        peaks[index]=max(peaks[index],best_score);stalls[index]=0
+                        recent[index].append(tuple(best))
+                counts['region_seconds']+=time.monotonic()-region_started
+        progress()
     termination='perfect_board_validated' if best_score==max_score else 'stopped' if stopped() else 'timeout'
     return {'outcome':'solved' if best_score==max_score else 'stopped' if termination=='stopped' else 'timeout',
             'termination':termination,'board':best,'score':best_score,'reference_score':initial,
             'improved':best_score>initial,'max_score':max_score,'neighborhoods':completed,
-            'recombinations':cycle_calls,'elapsed_seconds':time.monotonic()-start,
-            'proof_scope':'completed_independent_or_two_parent_neighborhoods_only',
-            'coverage_verified':False,'branches':None,'conflicts':None,**cost_stats()}
+            'recombinations':cycle_calls,'elapsed_seconds':time.monotonic()-start,'parent_count':len(bank),
+            'proof_scope':'completed_repair_neighborhoods_with_frozen_complements_only',
+            'coverage_verified':False,'branches':None,'conflicts':None,**counts,**cost_stats()}

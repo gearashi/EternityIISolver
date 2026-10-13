@@ -204,7 +204,9 @@ class DashboardServer(ThreadingHTTPServer):
                             native = self.settings['exact_engine'] not in ('dfs', 'hybrid', 'partitioned')
                             saved.update(branches=None if native else 0, conflicts=None if native else 0,
                                          exact_counters_available=not native, exact_phase='starting')
-                            saved.update(neighborhoods=0, recombinations=0)
+                            saved.update(neighborhoods=0, recombinations=0, diversification_attempts=0,
+                                         diversifications=0, tabu_rejections=0, region_calls=0,
+                                         region_improvements=0, region_seconds=0.0, parent_count=0)
                             for key in ('max_depth', 'exact_outcome', 'exact_conclusion', 'rounds', 'free_cells', 'cores', 'cost_backend', 'cost_device', 'cost_batches', 'cost_pairs',
                                         'cost_kernel_seconds', 'cost_fallback_reason', 'tickets_total', 'tickets_completed',
                                         'split_tickets', 'queue_records', 'target_score', 'hitting_set_seconds'):

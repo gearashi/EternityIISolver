@@ -82,6 +82,50 @@ wall time and independently checked results. A timeout proves neither success
 nor impossibility. Regional infeasibility only describes the frozen region.
 Fewer explored branches alone does not establish a speed improvement.
 
+## Structured repair additions (0.3.2.dev1 local preview)
+
+The **GPU costs + CPU matching** and **Matching + cycle repair** engines now
+include all three additions below automatically. GPU costs still use CUDA or
+OpenCL; native assignment, cycle decisions and regional CP-SAT use one CPU
+worker. The ordinary GPU swap engine is unchanged.
+
+- **Plateau escapes:** after eight stagnant visits to a working parent, perform
+  a bounded set of legal swaps/rotations, then repair again. Working parents
+  may lose matches. A recent-board tabu list discourages immediate reversal;
+  a strict new local record overrides tabu. The independently validated
+  best-ever board is copied separately and can only improve. Pending GPU
+  batches are fully processed before a parent is perturbed.
+- **Diverse library parents:** first validate up to eight elite candidates, then
+  sample score bands with a seeded metadata-only pass. Reserve half the
+  remaining preparation budget for fetching and selection. At most 256
+  arrangements total are loaded by indexed row ID. Every accepted
+  board is independently validated and rescored. Up to 32 parents retain a
+  high-score elite quarter and otherwise spread piece placements, rotations
+  and mismatched edges. Selection is read-only and has a five-second default
+  budget; cancellation can return a smaller validated pool. No download is
+  initiated. The reference board is retained even if cache selection fails.
+- **Connected-region score repair:** choose a connected core near mismatched
+  edges plus compatible remote donor cells. Freeze all other exact placements
+  and seek the current best score + 1. The compact CP-SAT model enforces unique
+  physical pieces, legal domains/frame and all fixed clue orientations, and
+  scores each changing edge and boundary once plus the fixed score. Default
+  regions vary across 8/12/16/20 core cells and 2/4/6 donors. Calls run once per
+  eight portfolio batches, with a cooperative 0.25-second budget including
+  selection and setup, and roughly 20% of elapsed time across the run. Native
+  calls and cancellation checks can slightly overrun the requested budget. A failed neighborhood
+  establishes nothing about regions with different frozen complements.
+
+The dashboard shows working parents, plateau diversifications and region
+searches/improvements. All saved improvements retain independent validation
+and manual export. The search remains offline. API switches support bounded
+baseline comparisons; they do not disable any mandatory physical constraints.
+
+Finite tests compare regional objectives with exhaustive tiny-puzzle oracles,
+exercise seed reproducibility/cancellation and verify that lower-score working
+boards cannot overwrite the incumbent. Performance evidence is recorded in
+[SEARCH_RESEARCH.md](SEARCH_RESEARCH.md); these heuristics do not imply a
+verified route to 467 or 480.
+
 ## Bounded measurements: 13 October 2026
 
 On this Windows PC (Intel Core i7-4790, Python 3.12.14), the short tests

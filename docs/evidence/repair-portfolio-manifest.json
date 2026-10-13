@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "claim_id": "eii-three-repair-operators-20261013",
+  "repository": {
+    "commit": "bbd38a522d2daa125b6822e09f8f9e2edd2f3504",
+    "dirty": true
+  },
+  "command": "python -B -X utf8 scripts/benchmark_repair_portfolio.py --warmup --seconds 45 --backend cuda --modes combined --seeds 17 --output FRESH_RESULT.json; cold and warm two-seed comparisons use default modes/seeds and distinct fresh output paths. Parent-budget and post-import checks are recorded separately.",
+  "environment": {
+    "software": [
+      "Python 3.12.14",
+      "NumPy 2.5.3",
+      "OR-Tools 9.15.6755",
+      "python-sat 1.9.dev15",
+      "CuPy 14.2.0",
+      "PyOpenCL 2026.1.4",
+      "Windows 10.0.19044"
+    ],
+    "hardware": "Intel Core i7-4790; NVIDIA RTX 2060; one CPU worker and CUDA batches of 16; uncontrolled concurrent desktop workload"
+  },
+  "mathematics": {
+    "assertion_tested": "Finite correctness and bounded activation of legal plateau diversification, diverse cached-parent selection and score-target connected-region repair in the structured matching portfolio.",
+    "coefficient_domain": "Exact integer edge scores and finite oriented-piece domains; native CP-SAT objective and GPU integer costs independently checked.",
+    "conventions": "16x16 row-major cells; oriented state 4*(piece ID-1)+clockwise rotation; NESW faces; 480 shared edges; unique physical pieces, frame and all five fixed oriented clues. Regional complements stay frozen.",
+    "inputs": [
+      "Bundled data/pieces.txt, data/puzzle.json and data/record466.json; exact hashes and source bytes in reports/source archives",
+      "Read-only local cache: 121477 arrangements before user import and 137434 afterward; selected parent hashes recorded",
+      "Tiny exhaustive regional and matching oracle cases in unit tests"
+    ],
+    "bounds": {
+      "solver_seconds": 45.0,
+      "child_process_timeout_seconds": 75,
+      "parent_preparation_seconds": 5,
+      "warmup_enabled": true,
+      "warmup_cooperative_seconds": 20,
+      "shared_child_cooperative_seconds": 70,
+      "soft_host_memory_mb": 2048,
+      "cupy_gpu_memory_limit_bytes": 2147483648,
+      "cpu_workers": 1,
+      "gpu_batch_size": 16,
+      "cases": 1
+    },
+    "non_claims": [
+      "No 480 solution or improvement beyond 466 in these runs",
+      "No full-puzzle infeasibility or exhaustive search claim",
+      "No reliable speed ranking or faster time to solution",
+      "No BOINC work credit or project result submission",
+      "Local Windows checks do not certify other GPUs or platforms"
+    ]
+  },
+  "randomness": {
+    "used": true,
+    "generator": "Python random.Random and native solver seed; seeds 17 and 41 for comparisons, 17 for final confirmation",
+    "seed": 17
+  },
+  "run": {
+    "started_at": "2026-10-13T19:35:10.365195+00:00",
+    "runtime_seconds": 71.18800000008196,
+    "exit_status": 1
+  },
+  "outputs": [
+    {
+      "path": "docs/evidence/repair-cache-post-import-20261013.json",
+      "sha256": "1be54b86ace3ffcc1abdace446aaff318a7d3a2dd7b73834383efc8ef15c1356"
+    },
+    {
+      "path": "docs/evidence/repair-parent-budget-20261013.json",
+      "sha256": "159415210eb056a9acd8d23f40865d067b4b5b1c285825932dc6edb7711b43ba"
+    },
+    {
+      "path": "docs/evidence/repair-portfolio-final-20261013.json",
+      "sha256": "9d9b56858dcc23a06813e5d98648d11452682120168eb9cb3774c75f27fde5c5"
+    },
+    {
+      "path": "docs/evidence/repair-portfolio-final-20261013.sources.zip",
+      "sha256": "2bf66181a22d9d0de54b8c4696699beb33659129d83abec8fb9b822946a3c173"
+    },
+    {
+      "path": "docs/evidence/repair-portfolio-startup-20261013.json",
+      "sha256": "ef19f80c1c379140737a7fae8e73ea49f59f944a8c8df8961ae3e1ebd57ab21e"
+    },
+    {
+      "path": "docs/evidence/repair-portfolio-startup-20261013.sources.zip",
+      "sha256": "c0d438b18749bec81c6622a45c30f865338c589124660412a9fbf37b1f0ba268"
+    },
+    {
+      "path": "docs/evidence/repair-portfolio-warm-20261013.json",
+      "sha256": "b0d817d21f1fcd827d7660897a52c2ff37d00bca2dc9a710eafc95bcbd5cfd1a"
+    },
+    {
+      "path": "docs/evidence/repair-portfolio-warm-20261013.sources.zip",
+      "sha256": "0132f27d4a65d63d120b6e30379d3730242dd2f958f6f32eb90fd0a495a61735"
+    }
+  ],
+  "checks": [
+    "424-test initial full suite passed; affected follow-up tests passed after iterator/preparation changes; final parent selector 12 tests passed",
+    "Independent complete-board validation and tiny exhaustive region objective oracles; frame/clue/uniqueness invariants",
+    "Source exact diagnostics passed all 13 checks with a 15-second per-check budget; seven BOINC validator tests passed without running external apps",
+    "Cold and warmed comparisons preserved all protected runtime and cache hashes; final CUDA case validated and activated all operators",
+    "Final aggregate cache guard failed because of user-confirmed concurrent manual archive import; failure preserved in raw report",
+    "Post-import read-only cache check passed with 32 valid parents and unchanged source/runtime/cache hashes; no benchmark network attempts"
+  ],
+  "result": "Implementation and finite assertions verified in the tested range; final CUDA solver case passed (302 neighborhoods, 22 diversifications, 2 regional calls, best 466). Aggregate final report failed the physical cache stability guard during the user-confirmed import; subsequent cache stability check passed. Speed-to-solution evidence is inconclusive.",
+  "residual_risks": [
+    "Uncontrolled desktop load and short seeded runs; throughput is not solution quality",
+    "Cooperative time and host-memory limits can overrun between native calls",
+    "Older cold/warm reports measured pre-fix parent selection; their exact sources are archived",
+    "Legacy version-1 manifest provenance; full hashes/caps reside in individual reports",
+    "The final import changed the library during measurement; do not treat that report as an isolated cache-preservation pass"
+  ]
+}

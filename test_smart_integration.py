@@ -169,17 +169,26 @@ class SmartIntegrationTests(unittest.TestCase):
         def fake(**kwargs):
             self.assertEqual(kwargs['parents'], [candidate])
             kwargs['on_improvement']({'board': candidate, 'score': 467})
-            kwargs['on_progress']({'phase': 'matching_and_cycle_repair', 'neighborhoods': 12, 'recombinations': 3})
+            kwargs['on_progress']({'phase': 'connected_region_repair', 'neighborhoods': 12, 'recombinations': 3,
+                                   'diversification_attempts': 7, 'diversifications': 6, 'tabu_rejections': 2,
+                                   'region_calls': 4, 'region_improvements': 1, 'region_seconds': 0.75, 'parent_count': 2})
             return {'outcome': 'timeout', 'board': candidate, 'score': 467, 'neighborhoods': 12, 'recombinations': 3}
         with patch.object(exact_worker, 'validate_board', side_effect=validation), patch('smart_repair.cached_parents', return_value=[candidate]) as parents:
             self.assertEqual(self.run_fake('matching', fake), 0)
         self.assertEqual(parents.call_args.kwargs['limit'], 32)
+        self.assertGreaterEqual(parents.call_args.kwargs['max_seconds'], 0)
+        self.assertLessEqual(parents.call_args.kwargs['max_seconds'], 2)
+        self.assertEqual(parents.call_args.kwargs['seed'], exact_worker.DEFAULT_SEED)
+        self.assertTrue(callable(parents.call_args.kwargs['should_stop']))
         self.assertTrue(self.read('best.json')['library_known'])
         self.assertEqual(self.read('best.json')['source'], 'existing local library arrangement')
         self.assertEqual(database.read_bytes(), before)
         self.assertIsNone(self.read()['branches'])
         self.assertEqual(self.read()['neighborhoods'], 12)
         self.assertEqual(self.read()['recombinations'], 3)
+        for key, value in dict(diversification_attempts=7, diversifications=6, tabu_rejections=2,
+                               region_calls=4, region_improvements=1, region_seconds=0.75, parent_count=2).items():
+            self.assertEqual(self.read()[key], value)
 
     def test_target_infeasible_is_never_global_impossible(self):
         for engine in ('optimize', 'sat-optimize', 'core-repair'):
@@ -224,7 +233,9 @@ class SmartIntegrationTests(unittest.TestCase):
             return Worker()
         with dashboard_server.create_server(self.home, 0, worker_factory=spawn, library_factory=library_tests.FakeArchiveManager) as server:
             (self.runtime / 'status.json').write_text(json.dumps(dict(state='stopped', cost_backend='stale-backend',
-                        cost_device='stale-device', cost_pairs=999, tickets_total=999, target_score=480)))
+                        cost_device='stale-device', cost_pairs=999, tickets_total=999, target_score=480,
+                        diversification_attempts=999, diversifications=999, tabu_rejections=999, region_calls=999,
+                        region_improvements=999, region_seconds=999, parent_count=999)))
             status, accepted = server.start_worker(dict(method='exact', exact_engine='partitioned', workers=2,
                                                        pruning='strong', fresh_exact=True))
             self.assertTrue(accepted)
@@ -234,16 +245,25 @@ class SmartIntegrationTests(unittest.TestCase):
             self.assertEqual(status['pruning'], 'strong')
             for stale_key in ('cost_backend', 'cost_device', 'cost_pairs', 'tickets_total', 'target_score'):
                 self.assertNotIn(stale_key, status)
+            for counter in ('diversification_attempts', 'diversifications', 'tabu_rejections', 'region_calls', 'region_improvements', 'region_seconds', 'parent_count'):
+                self.assertEqual(status[counter], 0)
 
     def test_mock_ui_distinguishes_repair_metrics_and_native_counters(self):
         helper = library_tests.LibraryDashboardTests('test_boot_shows_cache_without_starting_archive_or_search')
         helper.server = SimpleNamespace(resources=Path(exact_worker.__file__).parent)
         base = dict(state='running', method='exact', can_start=False, workers=1, best_score=467,
                     exact_engine='matching', neighborhoods=14, recombinations=5, branches=None,
-                    library_known=True, exact_phase='matching_and_cycle_repair')
+                    library_known=True, exact_phase='connected_region_repair', parent_count=17,
+                    diversification_attempts=8, diversifications=6, tabu_rejections=2,
+                    region_calls=4, region_improvements=1, region_seconds=0.75)
         rendered = helper.render_status(base)
         self.assertEqual(rendered['proposed']['text'], '14')
         self.assertEqual(rendered['accepted']['text'], '5')
+        self.assertEqual(rendered['repairParents']['text'], '17')
+        self.assertEqual(rendered['diversifications']['text'], '6')
+        self.assertEqual(rendered['regionSearches']['text'], '4 / 1')
+        self.assertEqual(rendered['exactPhase']['text'], 'Repairing a connected region')
+        self.assertIn('saved best remains protected', rendered['activityNote']['text'])
         self.assertEqual(rendered['proposedLabel']['text'], 'Completed neighborhoods')
         self.assertEqual(rendered['recordLabel']['text'], 'Existing cached board')
         self.assertIn('not exhaustive search branches', rendered['activityNote']['text'])

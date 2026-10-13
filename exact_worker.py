@@ -201,6 +201,8 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
               'source_best_score': 466, 'branches': 0, 'conflicts': 0,
               'exact_counters_available': engine in ('dfs', 'hybrid', 'partitioned'),
               'pruning': pruning, 'neighborhoods': 0, 'recombinations': 0,
+              'diversification_attempts': 0, 'diversifications': 0, 'tabu_rejections': 0,
+              'region_calls': 0, 'region_improvements': 0, 'region_seconds': 0.0, 'parent_count': 0,
               'exact_phase': 'starting', 'scope': SCOPE,
               'external_network_enabled': False,
               'library': {'enabled': False, 'network_enabled': False, 'mode': 'offline'},
@@ -209,7 +211,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
               'resume_capability': 'none; each native SAT/CP run starts a new search'}
     if engine in ('matching', 'gpu-matching'):
         status.update(branches=None, conflicts=None,
-                      counter_semantics='completed repair neighborhoods and recombinations; not exhaustive branches or BOINC credit')
+                      counter_semantics='completed repair neighborhoods, recombinations, diversifications and region searches; not exhaustive branches or BOINC credit')
     session = {'schema_version': 1, 'settings': settings, 'started_at': status['start_time'],
                'scope': SCOPE, 'external_network_enabled': False}
 
@@ -260,6 +262,8 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             for key in ('branches', 'conflicts', 'max_depth', 'propagations', 'matching_checks',
                         'matching_failures', 'build_seconds', 'variables', 'clauses', 'table_rows',
                         'neighborhoods', 'recombinations', 'rounds', 'free_cells', 'cores',
+                        'diversification_attempts', 'diversifications', 'tabu_rejections', 'region_calls',
+                        'region_improvements', 'region_seconds', 'parent_count',
                         'tickets_total', 'tickets_completed', 'split_tickets', 'queue_records', 'cost_batches', 'cost_pairs',
                         'cost_kernel_seconds', 'cost_elapsed_seconds', 'target_score', 'hitting_set_seconds',
                         'gac_checks', 'gac_removed', 'independent_completions', 'probe_checks', 'probe_rejections'):
@@ -386,7 +390,9 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                 if engine in ('matching', 'gpu-matching'):
                     from smart_repair import cached_parents
                     try:
-                        solve_args['parents'] = cached_parents(problem, home / 'library' / 'library.sqlite3', limit=32)
+                        preparation_budget = 5.0 if seconds is None else max(0.0, min(5.0, seconds - (time.monotonic() - started)))
+                        solve_args['parents'] = cached_parents(problem, home / 'library' / 'library.sqlite3', limit=32,
+                                                             seed=seed, should_stop=should_stop, max_seconds=preparation_budget)
                     except (OSError, ValueError, sqlite3.Error) as exc:
                         solve_args['parents'] = []
                         status['cached_parents_warning'] = f'Local parent cache unavailable: {type(exc).__name__}'
