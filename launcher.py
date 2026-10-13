@@ -13,7 +13,7 @@ import webbrowser
 from app_paths import resource_root, state_root
 from process_control import read_status
 
-VERSION = '0.3.0.dev1'
+VERSION = '0.3.0'
 
 
 class _NoLocalRedirect(urllib.request.HTTPRedirectHandler):
@@ -40,9 +40,10 @@ def parser():
         command.add_argument('--state-dir', type=Path, help='Folder for checkpoints, cache, logs and results')
         if name in ('start', 'run'):
             command.add_argument('--method', choices=('gpu', 'exact'), default='gpu')
-            command.add_argument('--exact-engine', choices=('dfs', 'sat', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned'), default='dfs')
+            command.add_argument('--exact-engine', choices=('dfs', 'sat', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching'), default='dfs')
             command.add_argument('--workers', type=int, default=1, help='CPU workers (1; CP-SAT, optimization and partitioned DFS support up to 4)')
-            command.add_argument('--pruning', choices=('baseline', 'strong', 'full'), default='baseline')
+            command.add_argument('--gpu-repair-batch', type=int, default=16, help='GPU matching neighborhoods per batch1..64')
+            command.add_argument('--pruning', choices=('baseline', 'strong', 'full', 'adaptive'), default='baseline')
             command.add_argument('--fresh-exact', action='store_true', help='Archive the previous DFS frontier and explicitly restart')
             command.add_argument('--backend', choices=('auto', 'cuda', 'opencl'), default='auto')
             command.add_argument('--replicas', type=int, default=4096)
@@ -65,6 +66,7 @@ def parser():
     commands.add_parser('boinc', help='Run an experimental bounded BOINC workunit; boinc --help lists options')
     commands.add_parser('inspect-cpu', help='Read CPU workunit inputs and ticket IDs without running a search')
     commands.add_parser('diagnose-hybrid', help='Run bounded GPU random-board sampling diagnostics')
+    commands.add_parser('diagnose-assignment', help='Compare GPU placement costs with exact CPU matching on bounded fixtures')
     commands.add_parser('diagnose-exact', help='Run small offline CPU search-engine correctness checks')
     commands.add_parser('exact', help='Run an offline exact CPU search; exact --help lists options')
     commands.add_parser('export-best', help='Save validated candidate files locally for manual review; never uploads')
@@ -78,6 +80,8 @@ def run_arguments(args):
                   '--pruning', args.pruning]
         if args.fresh_exact:
             result.append('--fresh-exact')
+        if args.exact_engine == 'gpu-matching':
+            result.extend(['--backend', args.backend, '--gpu-repair-batch', str(args.gpu_repair_batch)])
         if args.exact_engine == 'hybrid':
             result.extend(['--backend', args.backend, '--replicas', str(args.replicas)])
         if args.seconds is not None:
@@ -161,7 +165,7 @@ def start(args):
     url = ensure_dashboard(home, args.port)
     payload = json.dumps({'method': args.method, 'exact_engine': args.exact_engine, 'workers': args.workers, 'replicas': args.replicas, 'backend': args.backend,
                           'seed': args.seed, 'seconds': args.seconds, 'no_library': args.no_library,
-                          'pruning': args.pruning, 'fresh_exact': args.fresh_exact}).encode()
+                          'pruning': args.pruning, 'fresh_exact': args.fresh_exact, 'gpu_repair_batch': args.gpu_repair_batch}).encode()
     request = urllib.request.Request(url + 'start', data=payload,
                                      headers={'Content-Type': 'application/json'}, method='POST')
     with local_urlopen(request, timeout=10) as response:
@@ -201,6 +205,9 @@ def main(argv=None):
     if argv and argv[0] == 'diagnose-hybrid':
         from hybrid_sampling import main as diagnose_hybrid
         return diagnose_hybrid(argv[1:])
+    if argv and argv[0] == 'diagnose-assignment':
+        from gpu_assignment import main as diagnose_assignment
+        return diagnose_assignment(argv[1:])
     if argv and argv[0] == 'diagnose-exact':
         from exact_diagnostics import main as diagnose_exact
         return diagnose_exact(argv[1:])

@@ -27,6 +27,12 @@ all possible algorithms. Correct pruning can be slower than a cheaper search.
 | CP-SAT score optimization | Maximizes all matched edges while retaining hard structural rules | Can save 467–479 improvements; score-target infeasibility is scoped explicitly |
 | Assumption-core repair | Expands frozen-board repair using actual SAT conflict cores | All edge equalities remain hard; timeout is never an UNSAT core |
 | Nonadjacent-set weighted matching | Optimizes a whole legal piece permutation and its rotations at once | Exact for that frozen-complement neighborhood; can plateau |
+| Conflict-core hitting sets | Selects a small set of released cells covering every verified SAT conflict core | Minimum applies only to collected cores; bounded fallback remains a checked cover |
+| Adaptive optional pruning | Schedules extra filters using deterministic work and useful deletions | Mandatory consistency remains; scheduling state is checkpointed |
+| Dynamic DFS splitting | Transfers a yielded remaining frontier into disjoint child tasks when workers idle | Cooperative slice boundaries only; caps preserve unsplit work |
+| Incremental SAT score bounds | Reuses one score encoding and learned clauses while seeking best+1 | Temporary mismatch assumptions; each score witness independently validated |
+| GPU batched placement costs | Computes integer cost matrices on CUDA/OpenCL; CPU solves exact assignments | Bounded batches, explicit device failure, independent full-board validation |
+| Component binary optimization | Tree dynamic programming and small complete enumeration of cycle choices | Exact component objective; general CP-SAT fallback for unsupported or interrupted cases |
 | Whole-cycle board recombination | Chooses between two cached boards by complete piece-permutation cycles | Preserves uniqueness by construction; exact objective for that parent pair |
 
 The matching portfolio uses both checkerboard halves and mixed-parity independent
@@ -39,22 +45,27 @@ completed neighborhoods separately from DFS branches.
 
 The dashboard exposes experimental score optimization, assumption-core repair,
 matching/cycle repair, and partitioned DFS under the CPU search selector. Existing GPU repair and
-GPU sampling followed by CPU DFS remain available. These new repair operators
-currently execute on the CPU; GPU acceleration of their small matching matrices
-has not been demonstrated.
+GPU sampling followed by CPU DFS remain available. GPU costs + CPU matching adds a separate neighborhood batch control (1..64, default16).
+The original parallel GPU search count is a different setting. GPU costs require an
+actual device; device failures never silently switch this mode to CPU. Cycle choices,
+assignments and final validation execute on the CPU.
 
-DFS exposes `--pruning baseline`, `--pruning strong` and `--pruning full`; the baseline remains
+DFS exposes `--pruning baseline`, `--pruning strong` , `--pruning adaptive` and `--pruning full`; the baseline remains
 available for comparisons. The strong profile enables SCC filtering, independent
 completion and alternative branch partitions. Maximum filtering (`full`) also enables
-probes and the color, square and flow checks. It may be slower. Advanced Python callers may pass
+probes and the color, square and flow checks. Adaptive schedules those optional checks
+using observed deterministic work and pruning utility, with periodic retry. Mandatory
+arc consistency and perfect-matching feasibility always remain enabled. Either profile may be slower. Advanced Python callers may pass
 `options` to `exact_dfs.solve` to select probes or `extra_rules` individually. See
 `scripts/benchmark_smart_search.py` for isolated ablations. Expensive rules are
 experimental rather than silently added to every node.
 
-DFS checkpoint schema is now version 3 and binds the complete option set and
-branch partitions. Version 2 checkpoints remain untouched but require the old
+DFS checkpoint schema is now version 4 and binds the complete option set and
+branch partitions. Version 2/3 checkpoints remain untouched but require the old
 app to resume. Explicitly choosing a fresh search archives the old checkpoint;
-changing profiles cannot silently reuse a different frontier. Native SAT/CP-SAT
+changing profiles cannot silently reuse a different frontier. Parallel queue schema is
+version2; version1 queues are preserved for the matching older app. Adaptive pre-node
+state and split ownership are validated during replay. Native SAT/CP-SAT
 and the repair portfolio restart search using the saved best board.
 
 ## Correctness and evidence
@@ -100,8 +111,8 @@ small-domain mismatch-bound integration; it is not a measurement of that new
 precheck. Broad full-puzzle domains skip that precheck. Small finite tests show
 it safely rejects a target that independent edge bounds alone miss.
 
-Parallel search currently makes initial disjoint partitions and resumes their
-frontiers; it does not dynamically subdivide a surviving ticket. Its cancellation,
+The first-round parallel measurements below predate dynamic subdivision. Current
+parallel search also subdivides a yielded frontier when there are idle workers. Its cancellation,
 checkpoint and piece/clue correctness have tiny tests and a bounded real-board
 CLI smoke check. These are not scaling benchmarks.
 
@@ -112,14 +123,13 @@ CLI smoke check. These are not scaling benchmarks.
   explanations from every custom propagator before enabling learned deletions.
 - Larger inventory-aware region caches must include available physical pieces,
   boundaries, domains and clue states. Boundary-only cache keys are unsound.
-- GPU-batched assignment costs may amortize launch/transfer costs over many
-  neighborhoods. One 128-cell matrix is small, so GPU benefit is unmeasured.
 - Color-2 path structure is unusually restricted in the real inventory, but
   decomposing around it may produce more cases than it eliminates. No pruning
   rule based solely on the current mismatched board has been enabled.
-- Symmetry reduction requires actual rotational equivalence and compatible clue
-  identities; equal color counts do not make pieces interchangeable.
-- Adaptive operator selection, impact heuristics and learned ordering require
+- The complete inventory audit found256 distinct rotational equivalence classes and
+  no piece with repeated rotational states. There is no such symmetry to remove in
+  this actual inventory. Equal color counts do not make pieces interchangeable.
+- Impact heuristics and learned ordering require
   comparison against stable seeded baselines. Their advice may reorder search,
   but cannot justify deleting a branch without a sound constraint.
 
@@ -133,3 +143,11 @@ The SAT route is informed by
 [Heule's Eternity II encoding](https://www.cs.cmu.edu/~mheule/publications/eternity.pdf).
 These sources motivate algorithms; they do not demonstrate a speedup or a 480
 solution for this implementation.
+
+## Continuing improvement program
+
+The route status and further experiments are tracked in [SEARCH_RESEARCH.md](SEARCH_RESEARCH.md).
+The program distinguishes implemented algorithms, finite correctness evidence, measured
+performance and untested candidates. An open-ended improvement loop cannot certify
+that no possible optimization remains. It preserves all board/STOP files and never
+turns a bounded negative result into a full-puzzle impossibility claim.

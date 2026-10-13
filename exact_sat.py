@@ -275,6 +275,15 @@ class AssumptionSession:
         self.check()
         self._built = True
 
+    def _search_literals(self, selectors):
+        """Temporary query literals; subclasses may add objective thresholds."""
+        return list(selectors)
+
+    def _validate_candidate(self, candidate, assumptions, selected):
+        from exact_model import check_solution
+        return check_solution(self.problem, candidate) and all(
+            candidate[c] == s for c, s in (assumptions or {}).items())
+
     def _assumptions(self, assumptions):
         if assumptions is None:
             return None
@@ -356,10 +365,11 @@ class AssumptionSession:
                         self.native.interrupt()
             monitor = threading.Thread(target=interrupt_if_needed, name='eternity-sat-interrupt', daemon=True)
             monitor.start()
-            if assumptions is None:
+            query_literals = self._search_literals(selectors)
+            if assumptions is None and not query_literals:
                 satisfiable = self.native.solve_limited(expect_interrupt=True)
             else:
-                satisfiable = self.native.solve_limited(assumptions=list(selectors), expect_interrupt=True)
+                satisfiable = self.native.solve_limited(assumptions=query_literals, expect_interrupt=True)
             done.set()
             monitor.join()
             self.check()
@@ -371,7 +381,6 @@ class AssumptionSession:
                         raise RuntimeError('SAT returned an unknown assumption in its core')
                     core = sorted(selectors[literal] for literal in raw_core)
             elif satisfiable is True:
-                from exact_model import check_solution
                 selected = {literal for literal in self.native.get_model() if literal > 0}
                 candidate = []
                 for placements in self.cell_vars:
@@ -380,7 +389,7 @@ class AssumptionSession:
                     if len(states) != 1:
                         raise RuntimeError('SAT model did not select exactly one state per cell')
                     candidate.append(states[0])
-                if not check_solution(self.problem, candidate) or any(candidate[c] != s for c, s in (assumptions or {}).items()):
+                if not self._validate_candidate(candidate, assumptions, selected):
                     raise RuntimeError('SAT result failed independent exact-board/assumption validation')
                 self.check()
                 board, outcome = candidate, 'solved'

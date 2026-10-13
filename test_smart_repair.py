@@ -46,9 +46,11 @@ class SmartRepairTests(unittest.TestCase):
                     candidate=list(board)
                     for c,s in zip(cells,states): candidate[c]=s
                     if structurally_valid(p,candidate): optimum=max(optimum,score(p,candidate))
-            result=assignment_repair(p,board,cells)
-            self.assertTrue(result['optimal']);self.assertEqual(result['score'],optimum)
-            self.assertTrue(all(result['board'][c]==board[c] for c in range(9) if c not in cells))
+            for bulk_arcs in (False,True):
+                result=assignment_repair(p,board,cells,bulk_arcs=bulk_arcs)
+                self.assertTrue(result['optimal']);self.assertEqual(result['score'],optimum)
+                self.assertEqual(result['matching_arc_mode'],'bulk' if bulk_arcs else 'scalar')
+                self.assertTrue(all(result['board'][c]==board[c] for c in range(9) if c not in cells))
 
     def test_cycle_recombination_agrees_with_all_component_choices(self):
         for seed in range(8):
@@ -127,7 +129,8 @@ class SmartRepairTests(unittest.TestCase):
                     self.stops+=1
                     if self.stops>=2: self.done.set()
             fake=Waiting()
-            with self.subTest(cancel=cancel),patch.object(cp_model,'CpSolver',return_value=fake):
+            with self.subTest(cancel=cancel),patch.object(cp_model,'CpSolver',return_value=fake), \
+                 patch('binary_pairwise.maximize',return_value={'optimal':False}):
                 result=cycle_recombine(p,a,b,seconds=2 if cancel else .08,
                                        should_stop=fake.entered.is_set if cancel else None)
             self.assertGreaterEqual(fake.stops,2)
@@ -144,6 +147,7 @@ class SmartRepairTests(unittest.TestCase):
             time.sleep(.03)
             return original(model,variables,rows)
         with patch.object(cp_model.CpModel,'add_allowed_assignments',slow_table), \
+             patch('binary_pairwise.maximize',return_value={'optimal':False}), \
              patch.object(cp_model,'CpSolver',side_effect=AssertionError('No second native budget')):
             result=cycle_recombine(p,a,b,seconds=.01)
         self.assertEqual(result['termination'],'timeout')
@@ -178,6 +182,92 @@ class SmartRepairTests(unittest.TestCase):
             self.assertEqual(result['board'],reference)
             self.assertEqual(result['neighborhoods'],0)
             self.assertEqual(result['recombinations'],0)
+
+    def test_gpu_portfolio_batches_neighborhoods_and_reports_actual_cost_backend(self):
+        from gpu_assignment import AssignmentEvaluator
+        p,answer=generated_problem(4,5,8,clue_count=1)
+        reference=scrambled(p,answer,33)
+        created=[]
+        def cpu_fixture(problem,**kwargs):
+            self.assertEqual(kwargs['backend'],'cuda');self.assertFalse(kwargs['allow_cpu_fallback'])
+            kwargs['backend']='cpu';evaluator=AssignmentEvaluator(problem,**kwargs);created.append(evaluator)
+            return evaluator
+        progress=[]
+        with patch('gpu_assignment.AssignmentEvaluator',side_effect=cpu_fixture):
+            result=solve(p,reference,seconds=.1,gpu_backend='cuda',gpu_batch_size=8,on_progress=progress.append)
+        self.assertTrue(structurally_valid(p,result['board']))
+        self.assertGreaterEqual(result['score'],score(p,reference))
+        self.assertEqual(result['cost_backend'],'cpu')
+        self.assertGreater(result['cost_batches'],0)
+        self.assertGreater(result['cost_pairs'],0)
+        self.assertTrue(all(item['cost_backend']=='cpu' and 'GPU costs' not in item['backend'] for item in progress))
+
+    def test_gpu_portfolio_unavailable_and_stopped_policies_are_explicit(self):
+        from gpu_backends import BackendUnavailable
+        p,answer=generated_problem(3,5,2)
+        reference=scrambled(p,answer,53)
+        with patch('gpu_backends.make_backend',side_effect=BackendUnavailable('unavailable fixture')) as runtime:
+            result=solve(p,reference,seconds=0,gpu_backend='cuda')
+            self.assertEqual(result['cost_backend'],'uninitialized');runtime.assert_not_called()
+            with self.assertRaises(BackendUnavailable): solve(p,reference,seconds=1,gpu_backend='cuda')
+            result=solve(p,reference,seconds=.1,gpu_backend='cuda',gpu_allow_cpu_fallback=True)
+        self.assertEqual(result['cost_backend'],'cpu')
+        self.assertIn('unavailable fixture',result['cost_fallback_reason'])
+        self.assertTrue(structurally_valid(p,result['board']))
+
+    def test_cycle_component_fast_path_matches_cp_sat_and_validates_its_objective(self):
+        from ortools.sat.python import cp_model
+        p,answer=generated_problem(3,3,0,clue_count=1)
+        a=scrambled(p,answer,12);b=scrambled(p,answer,23)
+        with patch.object(cp_model,'CpSolver',side_effect=AssertionError('Fast path should avoid CP-SAT')):
+            fast=cycle_recombine(p,a,b,seconds=1)
+        self.assertEqual(fast['cycle_backend'],'component-dp-and-enumeration')
+        self.assertTrue(fast['optimal'])
+        with patch('binary_pairwise.maximize',return_value={'optimal':False}):
+            general=cycle_recombine(p,a,b,seconds=1)
+        self.assertTrue(general['optimal']);self.assertEqual(general['score'],fast['score'])
+        self.assertEqual(general['cycle_backend'],'cp-sat')
+        cycles=[cycle for cycle in permutation_cycles(p,a,b) if any(a[c]!=b[c] for c in cycle)]
+        with patch('binary_pairwise.maximize',return_value={'optimal':True,'assignment':[0]*len(cycles),'value':-100}):
+            with self.assertRaises(RuntimeError): cycle_recombine(p,a,b,seconds=1)
+
+    def test_bulk_assignment_arcs_fallback_only_for_missing_api(self):
+        from ortools.graph.python import linear_sum_assignment
+        from gpu_assignment import cpu_cost_matrix
+        from smart_repair import _assignment_from_matrix
+        p,answer=generated_problem(4,3,4)
+        reference=scrambled(p,answer,32);matrix=cpu_cost_matrix(p,reference,independent_cells(p,parity=0))
+        Native=linear_sum_assignment.SimpleLinearSumAssignment
+        class ScalarOnly:
+            add_arcs_with_cost=None
+            def __init__(self): self.native=Native()
+            def __getattr__(self,name): return getattr(self.native,name)
+        with patch.object(linear_sum_assignment,'SimpleLinearSumAssignment',ScalarOnly):
+            fallback=_assignment_from_matrix(p,matrix)
+        scalar=_assignment_from_matrix(p,matrix,bulk_arcs=False)
+        self.assertEqual(fallback['matching_arc_mode'],'scalar');self.assertEqual(fallback['board'],scalar['board'])
+        class Broken(ScalarOnly):
+            def add_arcs_with_cost(self,*_): raise RuntimeError('bulk failure fixture')
+        with patch.object(linear_sum_assignment,'SimpleLinearSumAssignment',Broken):
+            with self.assertRaisesRegex(RuntimeError,'bulk failure fixture'): _assignment_from_matrix(p,matrix)
+
+    def test_bulk_assignment_arc_chunks_check_cancellation(self):
+        from ortools.graph.python import linear_sum_assignment
+        from gpu_assignment import cpu_cost_matrix
+        from smart_repair import _assignment_from_matrix
+        p,answer=generated_problem(16,3,3)
+        matrix=cpu_cost_matrix(p,answer,independent_cells(p,parity=0))
+        Native=linear_sum_assignment.SimpleLinearSumAssignment;calls=[]
+        class CancelAfterChunk:
+            def __init__(self): self.native=Native()
+            def __getattr__(self,name): return getattr(self.native,name)
+            def add_arcs_with_cost(self,left,right,costs):
+                calls.append(len(left));return self.native.add_arcs_with_cost(left,right,costs)
+            def solve(self): raise AssertionError('Cancellation should precede native matching')
+        with patch.object(linear_sum_assignment,'SimpleLinearSumAssignment',CancelAfterChunk):
+            result=_assignment_from_matrix(p,matrix,should_stop=lambda:bool(calls))
+        self.assertEqual(calls,[4096]);self.assertEqual(result['termination'],'stopped')
+        self.assertEqual(result['board'],answer)
 
 if __name__=='__main__': unittest.main()
 

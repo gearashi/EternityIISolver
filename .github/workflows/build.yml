@@ -46,7 +46,7 @@ jobs:
         if: matrix.flavor == 'cuda-opencl'
         run: python -m pip install -r requirements-cuda.txt
       - name: CPU rule, lifecycle, library, backend, and BOINC tests
-        run: python -m unittest test_validator test_library_cache test_library_download test_library_dashboard test_archive_import test_lifecycle test_gpu_backends test_boinc_worker test_boinc_cpu_workunit test_manual_export test_exact_cp test_exact_sat test_exact_dfs test_exact_integration test_exact_worker test_exact_pruning test_hybrid_worker test_hybrid_sampling test_dfs_improvements test_exact_rules test_exact_optimize test_smart_repair test_smart_integration test_exact_parallel test_mismatch_bounds test_exact_sat_session -v
+        run: python -m unittest test_validator test_library_cache test_library_download test_library_dashboard test_archive_import test_lifecycle test_gpu_backends test_boinc_worker test_boinc_cpu_workunit test_manual_export test_exact_cp test_exact_sat test_exact_dfs test_exact_integration test_exact_worker test_exact_pruning test_hybrid_worker test_hybrid_sampling test_dfs_improvements test_exact_rules test_exact_optimize test_smart_repair test_smart_integration test_exact_parallel test_mismatch_bounds test_exact_sat_session test_exact_sat_optimize test_dfs_adaptive test_parallel_splitting test_gpu_assignment test_binary_pairwise test_dfs_supported test_parallel_cache -v
       - name: Independent BOINC result validation tests
         run: python -m unittest discover -s boinc -p "test_*.py" -v
       - name: Build native archive and smoke-test frozen commands
@@ -84,6 +84,8 @@ jobs:
         run: python test_gpu.py --backend opencl --allow-opencl-cpu --replicas 128 --output build/opencl-pocl-diagnostic.json
       - name: Source random-board sampler correctness on PoCL
         run: python launcher.py diagnose-hybrid --backend opencl --allow-opencl-cpu --replicas 32 --seconds 0.1 --output build/hybrid-pocl.json
+      - name: Source assignment-kernel correctness on PoCL (CPU diagnostic only)
+        run: python launcher.py diagnose-assignment --backend opencl --allow-opencl-cpu --size 6 --count 8 --seconds 90 --output build/assignment-pocl.json
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: release-linux-x64
@@ -109,6 +111,8 @@ jobs:
           fi
       - name: Frozen random-board sampler correctness on PoCL
         run: ./frozen/EternityIISolver/EternityIISolver diagnose-hybrid --backend opencl --allow-opencl-cpu --replicas 32 --seconds 0.1 --output build/frozen-hybrid-pocl.json
+      - name: Frozen assignment-kernel correctness on PoCL (CPU diagnostic only)
+        run: ./frozen/EternityIISolver/EternityIISolver diagnose-assignment --backend opencl --allow-opencl-cpu --size 6 --count 8 --seconds 90 --output build/frozen-assignment-pocl.json
       - name: Upload diagnostic evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -121,6 +125,8 @@ jobs:
             build/frozen-opencl-loader.log
             build/hybrid-pocl.json
             build/frozen-hybrid-pocl.json
+            build/assignment-pocl.json
+            build/frozen-assignment-pocl.json
           if-no-files-found: warn
 
   python-package:

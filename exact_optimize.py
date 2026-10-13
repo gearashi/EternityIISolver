@@ -310,9 +310,117 @@ def optimize(problem, reference, seconds=30.0, seed=0, workers=1, should_stop=No
     return answer
 
 
+class _CoreHittingSet:
+    """Persistent necessary release constraints with bounded exact selection.
+
+    A core constraint requires at least one released freeze. A stopped or
+    unknown CP-SAT call falls back to a checked greedy cover, never a claimed
+    minimum. The hard puzzle is still decided only by its SAT oracle.
+    """
+    def __init__(self, cells, seed=0):
+        from ortools.sat.python import cp_model
+        self.cp_model = cp_model
+        self.model = cp_model.CpModel()
+        self.variables = {cell: self.model.new_bool_var(f'release_{cell}') for cell in cells}
+        self.model.minimize(sum(self.variables.values()))
+        self.cores = []
+        self._seen_cores = set()
+        self.seed = seed
+        self.solves = 0
+        self.seconds = 0.0
+        self.optimal = False
+
+    def add(self, core):
+        core = frozenset(core)
+        if not core or not core <= self.variables.keys():
+            raise ValueError('Hitting-set core must contain releasable cells')
+        if core not in self._seen_cores:
+            self._seen_cores.add(core)
+            self.cores.append(core)
+            self.model.add(sum(self.variables[c] for c in core) >= 1)
+
+    def choose(self, previous=(), seconds=.25, should_stop=None):
+        started = time.monotonic()
+        deadline = started + seconds
+        self.optimal = False
+        universe = set(self.variables)
+        def expired():
+            return ((should_stop is not None and should_stop()) or
+                    time.monotonic() >= deadline)
+        def early(chosen):
+            self.seconds += time.monotonic() - started
+            return chosen
+        # Every core is a nonempty subset of this small (<=256) universe. It
+        # is a guaranteed cover even when cancellation forbids constructing a
+        # better fallback from a long history of cores.
+        if expired():
+            return early(universe)
+        previous = set(previous)
+        counts = {cell: 0 for cell in self.variables}
+        incident = {cell: [] for cell in self.variables}
+        for index, core in enumerate(self.cores):
+            if index % 32 == 0 and expired():
+                return early(universe)
+            for cell in core:
+                counts[cell] += 1
+                incident[cell].append(index)
+        pending = set(range(len(self.cores)))
+        fallback = set()
+        while pending:
+            if expired():
+                return early(universe)
+            cell = max(counts, key=lambda c: (counts[c], c in previous, -c))
+            fallback.add(cell)
+            for offset, index in enumerate(incident[cell]):
+                if offset % 32 == 0 and expired():
+                    return early(universe)
+                if index in pending:
+                    pending.remove(index)
+                    for member in self.cores[index]:
+                        counts[member] -= 1
+        if expired():
+            return early(fallback)
+        self.model.clear_hints()
+        for cell, variable in self.variables.items():
+            self.model.add_hint(variable, int(cell in fallback))
+        solver = self.cp_model.CpSolver()
+        solver.parameters.num_search_workers = 1
+        solver.parameters.random_seed = self.seed & 0x7fffffff
+        solver.parameters.max_time_in_seconds = max(0., seconds - (time.monotonic() - started))
+        finished, errors = threading.Event(), []
+        def watch():
+            while not finished.wait(.01):
+                try:
+                    if time.monotonic() >= deadline or (should_stop is not None and should_stop()):
+                        solver.stop_search()
+                except BaseException as exc:
+                    errors.append(exc)
+                    solver.stop_search()
+        monitor = threading.Thread(target=watch, name='eternity-core-hitting-set', daemon=True)
+        monitor.start()
+        self.solves += 1
+        try:
+            status = solver.solve(self.model)
+        finally:
+            finished.set()
+            monitor.join()
+            self.seconds += time.monotonic() - started
+        if errors:
+            raise RuntimeError('Hitting-set cancellation callback failed') from errors[0]
+        if status in (self.cp_model.OPTIMAL, self.cp_model.FEASIBLE):
+            chosen = {c for c, variable in self.variables.items() if solver.value(variable)}
+            if not all(chosen & core for core in self.cores):
+                raise RuntimeError('Hitting-set witness failed independent core coverage check')
+            self.optimal = status == self.cp_model.OPTIMAL
+            return chosen
+        if status not in (self.cp_model.UNKNOWN,):
+            raise RuntimeError('Necessary release constraints unexpectedly rejected a feasible cover')
+        return fallback
+
+
 def core_guided_repair(problem, reference, seconds=30.0, seed=0, workers=1, should_stop=None,
                        on_improvement=None, on_progress=None, *, free_cells=None, max_rounds=None,
-                       reverse_support=True):
+                       reverse_support=True, release_policy="hitting-set"):
     """Expand an exact repair neighborhood using SAT assumption UNSAT cores.
 
     All grid edges are always hard, even between frozen cells. Fixed clues are
@@ -320,15 +428,25 @@ def core_guided_repair(problem, reference, seconds=30.0, seed=0, workers=1, shou
     of those *temporary* freezes must be released; it does not blame every
     member or prove the full puzzle impossible. Native timeout never creates
     a core. One incremental SAT model and its learned clauses are reused
-    across rounds under a single build-and-search deadline.
+    across rounds under a single build-and-search deadline. The default
+    hitting-set policy may refreeze previously released cells to address all
+    learned cores with fewer releases. free_cells seeds the first query only.
+    The legacy monotone policy is available as release_policy="greedy".
     """
     started = time.monotonic()
+    from exact_model import ExactProblem
+    problem = ExactProblem(problem.size, tuple(tuple(f) for f in problem.faces),
+                           dict(problem.fixed), tuple(tuple(d) for d in problem.domains),
+                           None if problem.edges is None else tuple(tuple(e) for e in problem.edges))
+    reference = list(reference)
     baseline, maximum = _inputs(problem, reference, seconds, seed, workers,
                                 should_stop, on_improvement, on_progress)
     deadline = started + seconds
     count = problem.size ** 2
+    if release_policy not in ("hitting-set", "greedy"):
+        raise ValueError('release_policy must be hitting-set or greedy')
     if max_rounds is None:
-        max_rounds = count + 1
+        max_rounds = count * count + 1 if release_policy == "hitting-set" else count + 1
     if type(max_rounds) is not int or max_rounds < 1:
         raise ValueError('max_rounds must be a positive integer')
     if type(reverse_support) is not bool:
@@ -345,6 +463,7 @@ def core_guided_repair(problem, reference, seconds=30.0, seed=0, workers=1, shou
     best = list(reference)
     score = baseline
     cores = []
+    hitting_set = None
     rounds = branches = conflicts = model_builds = 0
     build_seconds = 0.0
     final_native_status = None
@@ -358,11 +477,19 @@ def core_guided_repair(problem, reference, seconds=30.0, seed=0, workers=1, shou
                 'incremental_sat': True, 'model_builds': model_builds, 'assumption_queries': rounds,
                 'elapsed_seconds': time.monotonic() - started, 'build_seconds': build_seconds,
                 'free_cells': sorted(free), 'cores': [list(core) for core in cores],
+                'release_policy': release_policy,
+                'hitting_set_optimal': None if hitting_set is None else hitting_set.optimal,
+                'hitting_set_solves': 0 if hitting_set is None else hitting_set.solves,
+                'hitting_set_seconds': 0.0 if hitting_set is None else hitting_set.seconds,
                 'solver_status': final_native_status, 'reason': why,
                 'proof_scope': 'supplied-domains-fixed-placements-and-full-grid-exact-target'}
 
+    stop_requested = False
     def stopped():
-        return should_stop is not None and should_stop()
+        nonlocal stop_requested
+        if should_stop is not None and should_stop():
+            stop_requested = True
+        return stop_requested
 
     if stopped():
         return result('stopped', 'stopped')
@@ -381,7 +508,7 @@ def core_guided_repair(problem, reference, seconds=30.0, seed=0, workers=1, shou
     # One CNF and one native learned-clause database for the whole repair.
     # Per-query assumption selectors are temporary; hard clues never change.
     with exact_sat.AssumptionSession(problem, seconds=max(0.0, deadline - time.monotonic()),
-                                     seed=seed, workers=workers, should_stop=should_stop,
+                                     seed=seed, workers=workers, should_stop=stopped,
                                      on_progress=progress, reverse_support=reverse_support) as sat:
         for round_index in range(max_rounds):
             if stopped():
@@ -418,7 +545,24 @@ def core_guided_repair(problem, reference, seconds=30.0, seed=0, workers=1, shou
             if not core:
                 return result('infeasible_for_target', 'infeasible_for_target',
                               'The supplied full-grid exact model is infeasible independently of temporary freezes')
+            if answer.get('core_placements') is not None and any(
+                    assumptions[cell] != state for cell, state in answer['core_placements'].items()):
+                raise RuntimeError('SAT core placement does not belong to this reference query')
             cores.append(core)
+            if release_policy == "hitting-set":
+                if stopped():
+                    return result('stopped', 'stopped')
+                if time.monotonic() >= deadline:
+                    return result('timeout', 'timeout')
+                if hitting_set is None:
+                    hitting_set = _CoreHittingSet((c for c in range(count) if c not in problem.fixed), seed)
+                hitting_set.add(core)
+                remaining = deadline - time.monotonic()
+                free = hitting_set.choose(free, seconds=max(0., min(.25, remaining * .2)),
+                                          should_stop=stopped)
+                if not all(free.intersection(previous) for previous in cores):
+                    raise RuntimeError('Release selection failed to cover every verified core')
+                continue
             # A core says at least one freeze must change, not that every core
             # member is wrong. Release one; all alternatives remain in the CNF.
             def priority(cell):

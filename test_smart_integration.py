@@ -34,9 +34,45 @@ class SmartIntegrationTests(unittest.TestCase):
     def read(self, name='status.json'):
         return json.loads((self.runtime / name).read_text(encoding='utf-8'))
 
-    def run_fake(self, engine, backend, **settings):
+    def run_fake(self, engine, fake_solver, **settings):
         return exact_worker.run_task(self.home, engine=engine, seconds=2,
-                                     solver_factory=lambda _: backend, **settings)
+                                     solver_factory=lambda _: fake_solver, **settings)
+
+    def test_adaptive_and_gpu_matching_options_reach_worker(self):
+        seen = {}
+        def fake(**kwargs):
+            seen.update(kwargs)
+            return {'outcome': 'timeout', 'board': None}
+        self.assertEqual(self.run_fake('dfs', fake, pruning='adaptive'), 0)
+        self.assertTrue(seen['options']['adaptive'])
+        self.assertTrue(seen['options']['probe'])
+        seen.clear()
+        with patch('smart_repair.cached_parents', return_value=[]):
+            self.assertEqual(self.run_fake('gpu-matching', fake, backend='cuda', gpu_repair_batch=7), 0)
+        self.assertEqual(seen['gpu_backend'], 'cuda')
+        self.assertEqual(seen['gpu_batch_size'], 7)
+        self.assertFalse(seen['gpu_allow_cpu_fallback'])
+        settings = dashboard_server.validate_settings(dict(method='exact', exact_engine='gpu-matching',
+                                                           backend='opencl', gpu_repair_batch=7))
+        command = dashboard_server.worker_command(self.home, 8765, settings)
+        self.assertEqual(command[command.index('--gpu-repair-batch')+1], '7')
+        self.assertEqual(command[command.index('--backend')+1], 'opencl')
+        for bad in (0, 65, True, 2.5, 'abc'):
+            with self.assertRaises(ValueError):
+                dashboard_server.validate_settings(dict(gpu_repair_batch=bad))
+
+    def test_gpu_matching_ui_has_separate_batch_and_labels(self):
+        helper = library_tests.LibraryDashboardTests('test_boot_shows_cache_without_starting_archive_or_search')
+        helper.server = SimpleNamespace(resources=Path(exact_worker.__file__).parent)
+        rendered = helper.render_status(dict(state='stopped', method='exact', can_start=True,
+                      exact_engine='gpu-matching', settings={'method':'exact', 'exact_engine':'gpu-matching',
+                      'gpu_repair_batch':7}, cost_device='fixture GPU', cost_backend='cuda'))
+        self.assertFalse(rendered['gpuSettings']['hidden'])
+        self.assertFalse(rendered['gpuRepairSettings']['hidden'])
+        self.assertTrue(rendered['gpuReplicaSettings']['hidden'])
+        self.assertIn('CPU exact assignment', rendered['gpu']['text'])
+        self.assertIn('fixture GPU', rendered['gpu']['text'])
+        self.assertEqual(rendered['proposedLabel']['text'], 'Completed neighborhoods')
 
     def test_full_profile_reaches_all_optional_rules(self):
         seen={}
@@ -48,7 +84,7 @@ class SmartIntegrationTests(unittest.TestCase):
         self.assertEqual(seen['options']['extra_rules'],{})
 
     def test_new_engine_settings_and_cli_arguments(self):
-        for engine in ('optimize', 'core-repair', 'matching', 'partitioned'):
+        for engine in ('optimize', 'sat-optimize', 'core-repair', 'matching', 'gpu-matching', 'partitioned'):
             workers = 4 if engine in ('optimize', 'partitioned') else 1
             settings = dashboard_server.validate_settings(dict(method='exact', exact_engine=engine,
                                           workers=workers, pruning='strong', fresh_exact=True))
@@ -62,7 +98,7 @@ class SmartIntegrationTests(unittest.TestCase):
             self.assertIn('--fresh-exact', forwarded)
             self.assertEqual(forwarded[forwarded.index('--pruning') + 1], 'strong')
             exact_worker._settings(engine, 2, 17, workers, 8765, pruning='strong')
-        for engine in ('core-repair', 'matching'):
+        for engine in ('core-repair', 'matching', 'gpu-matching', 'sat-optimize'):
             with self.assertRaises(ValueError):
                 dashboard_server.validate_settings(dict(method='exact', exact_engine=engine, workers=2))
             with self.assertRaises(ValueError):
@@ -146,7 +182,7 @@ class SmartIntegrationTests(unittest.TestCase):
         self.assertEqual(self.read()['recombinations'], 3)
 
     def test_target_infeasible_is_never_global_impossible(self):
-        for engine in ('optimize', 'core-repair'):
+        for engine in ('optimize', 'sat-optimize', 'core-repair'):
             def fake(**kwargs):
                 return {'outcome': 'infeasible_for_target', 'board': list(self.bundle.record_board), 'score': 466,
                         'proof_scope': 'fixture-selected-target'}
@@ -187,6 +223,8 @@ class SmartIntegrationTests(unittest.TestCase):
             calls.append(command)
             return Worker()
         with dashboard_server.create_server(self.home, 0, worker_factory=spawn, library_factory=library_tests.FakeArchiveManager) as server:
+            (self.runtime / 'status.json').write_text(json.dumps(dict(state='stopped', cost_backend='stale-backend',
+                        cost_device='stale-device', cost_pairs=999, tickets_total=999, target_score=480)))
             status, accepted = server.start_worker(dict(method='exact', exact_engine='partitioned', workers=2,
                                                        pruning='strong', fresh_exact=True))
             self.assertTrue(accepted)
@@ -194,6 +232,8 @@ class SmartIntegrationTests(unittest.TestCase):
             self.assertFalse(server.settings['fresh_exact'])
             self.assertFalse(self.read('dashboard-settings.json')['fresh_exact'])
             self.assertEqual(status['pruning'], 'strong')
+            for stale_key in ('cost_backend', 'cost_device', 'cost_pairs', 'tickets_total', 'target_score'):
+                self.assertNotIn(stale_key, status)
 
     def test_mock_ui_distinguishes_repair_metrics_and_native_counters(self):
         helper = library_tests.LibraryDashboardTests('test_boot_shows_cache_without_starting_archive_or_search')
@@ -207,7 +247,7 @@ class SmartIntegrationTests(unittest.TestCase):
         self.assertEqual(rendered['proposedLabel']['text'], 'Completed neighborhoods')
         self.assertEqual(rendered['recordLabel']['text'], 'Existing cached board')
         self.assertIn('not exhaustive search branches', rendered['activityNote']['text'])
-        for engine in ('optimize', 'core-repair'):
+        for engine in ('optimize', 'sat-optimize', 'core-repair'):
             rendered = helper.render_status(dict(base, exact_engine=engine, exact_counters_available=False))
             self.assertEqual(rendered['proposed']['text'], 'Not yet reported')
         rendered = helper.render_status(dict(base, state='stopped', can_start=True, exact_engine='partitioned', workers=4))

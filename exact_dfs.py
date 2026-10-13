@@ -16,14 +16,14 @@ import time
 
 from exact_model import check_solution, constraint_edges, problem_hash
 
-CHECKPOINT_VERSION = 3
-ORDERING_VERSION = 'mrv-degree-lcv-hint-partitions-v2'
+CHECKPOINT_VERSION = 4
+ORDERING_VERSION = 'mrv-degree-lcv-hint-adaptive-v3'
 MAX_CHECKPOINT_BYTES = 2 * 1024 * 1024
 _COUNTERS = ('branches', 'conflicts', 'propagations', 'max_depth', 'matching_checks', 'matching_failures',
              'gac_checks', 'gac_removed', 'independent_checks', 'independent_completions',
              'probe_checks', 'probe_rejections', 'cell_branches', 'piece_branches', 'edge_branches')
 DEFAULT_OPTIONS = dict(gac=False, independent_completion=False, dual_branch=False,
-                       edge_branch=False, probe=False, probe_max_candidates=8,
+                       edge_branch=False, adaptive=False, probe=False, probe_max_candidates=8,
                        probe_max_domain=8, probe_max_depth=8, extra_rules=None)
 
 
@@ -34,7 +34,7 @@ def normalize_options(options=None):
     if not isinstance(options, dict) or set(options) - set(DEFAULT_OPTIONS):
         raise ValueError('Unknown DFS options or invalid options object')
     result = dict(DEFAULT_OPTIONS, **options)
-    for key in ('gac', 'independent_completion', 'dual_branch', 'edge_branch', 'probe'):
+    for key in ('gac', 'independent_completion', 'dual_branch', 'edge_branch', 'probe', 'adaptive'):
         if type(result[key]) is not bool:
             raise ValueError('DFS option %s must be boolean' % key)
     for key, lower, upper in (('probe_max_candidates', 1, 64), ('probe_max_domain', 2, 64),
@@ -80,7 +80,7 @@ def _hint_data(hints, n):
 
 def _checked_checkpoint(value, identity, seed, n, hint_identity, options_identity):
     """Bounded data validation; the checksum detects corruption, not forgery."""
-    keys = {'version', 'ordering_version', 'problem_hash', 'hint_hash', 'options_hash', 'seed', 'stack', 'rng_state', 'counters', 'checksum'}
+    keys = {'version', 'ordering_version', 'problem_hash', 'hint_hash', 'options_hash', 'seed', 'stack', 'rng_state', 'counters', 'adaptive_policy', 'checksum'}
     if not isinstance(value, dict):
         raise ValueError('Invalid DFS checkpoint fields')
     if type(value.get('version')) is not int or value['version'] != CHECKPOINT_VERSION:
@@ -95,6 +95,7 @@ def _checked_checkpoint(value, identity, seed, n, hint_identity, options_identit
         raise ValueError('DFS checkpoint options hash mismatch')
     if value['problem_hash'] != identity or type(value['seed']) is not int or value['seed'] != seed:
         raise ValueError('DFS checkpoint problem or seed mismatch')
+    _check_policy(value['adaptive_policy'])
     counters = value['counters']
     if not isinstance(counters, dict) or set(counters) != set(_COUNTERS):
         raise ValueError('Invalid DFS checkpoint counters')
@@ -111,8 +112,9 @@ def _checked_checkpoint(value, identity, seed, n, hint_identity, options_identit
             if set(frame) != {'phase'} or index != len(stack) - 1:
                 raise ValueError('Only the final DFS frame may be pending')
             continue
-        if set(frame) != {'phase', 'kind', 'cell', 'candidates', 'next'} or frame['phase'] != 'branch':
+        if set(frame) != {'phase', 'kind', 'cell', 'candidates', 'next', 'adaptive_before'} or frame['phase'] != 'branch':
             raise ValueError('Invalid DFS branch frame')
+        _check_policy(frame['adaptive_before'])
         if frame['kind'] not in ('cell', 'piece', 'edge'):
             raise ValueError('Invalid DFS branch kind')
         choices = frame['candidates']
@@ -147,6 +149,31 @@ def _checked_checkpoint(value, identity, seed, n, hint_identity, options_identit
     return json.loads(json.dumps(value, separators=(',', ':')))
 
 
+_ADAPTIVE_FILTERS = ('rules', 'gac', 'probe')
+_POLICY_FIELDS = ('calls', 'skips', 'work', 'removed', 'failures', 'cooldown', 'interval')
+
+
+def _new_policy():
+    return {name: dict(calls=0, skips=0, work=0, removed=0, failures=0, cooldown=0, interval=1)
+            for name in _ADAPTIVE_FILTERS}
+
+
+def _copy_policy(policy):
+    return {name: dict(values) for name, values in policy.items()}
+
+
+def _check_policy(policy):
+    if not isinstance(policy, dict) or set(policy) != set(_ADAPTIVE_FILTERS):
+        raise ValueError('Invalid adaptive DFS policy')
+    for values in policy.values():
+        if not isinstance(values, dict) or set(values) != set(_POLICY_FIELDS):
+            raise ValueError('Invalid adaptive DFS policy fields')
+        if any(type(v) is not int or not 0 <= v < 2**63 for v in values.values()):
+            raise ValueError('Invalid adaptive DFS policy count')
+        if not 1 <= values['interval'] <= 16 or not 0 <= values['cooldown'] <= 16:
+            raise ValueError('Invalid adaptive DFS scheduling interval')
+
+
 class _Interrupted(Exception):
     def __init__(self, outcome):
         self.outcome = outcome
@@ -167,6 +194,10 @@ class _Search:
         for key in _COUNTERS:
             setattr(self, key, 0)
         self.options = normalize_options(options)
+        self.policy = _new_policy()
+        self.committed_policy = _copy_policy(self.policy)
+        self.work_ticks = 0
+        self.adaptive_seconds = {name: 0.0 for name in _ADAPTIVE_FILTERS}
         self.rules_version = None
         if self.options['extra_rules'] is not None:
             from exact_rules import RULES_VERSION
@@ -195,6 +226,8 @@ class _Search:
         self.restore_complete = checkpoint is None
         self.input_checkpoint = None if checkpoint is None else _checked_checkpoint(checkpoint, self.identity, seed, self.n, self.hint_hash, self.options_hash)
         if self.input_checkpoint is not None:
+            self.policy = _copy_policy(self.input_checkpoint['adaptive_policy'])
+            self.committed_policy = _copy_policy(self.policy)
             for key, value in self.input_checkpoint['counters'].items():
                 setattr(self, key, value)
 
@@ -211,12 +244,15 @@ class _Search:
             'ordering_version': ORDERING_VERSION,
             'options': json.loads(json.dumps(self.options)), 'options_hash': self.options_hash,
             'rules_version': self.rules_version,
+            'adaptive_policy': _copy_policy(self.committed_policy),
+            'adaptive_seconds_session': dict(self.adaptive_seconds),
             # Rule counters describe this invocation, including reconstruction
             # and speculative probes; only the explicit DFS counters resume.
             'rule_counters_session': {} if self.rules is None else dict(self.rules.counters),
         }
 
     def check(self):
+        self.work_ticks += 1
         if self.should_stop is not None and self.should_stop():
             raise _Interrupted('stopped')
         now = time.perf_counter()
@@ -290,7 +326,7 @@ class _Search:
                 frames.append({'phase': 'pending'})
             else:
                 frames.append({key: frame[key] if key != 'candidates' else frame[key].copy()
-                               for key in ('phase', 'kind', 'cell', 'candidates', 'next')})
+                               for key in ('phase', 'kind', 'cell', 'candidates', 'next', 'adaptive_before')})
         if not frames:
             frames = [{'phase': 'pending'}]
         rng = self.committed_rng
@@ -299,7 +335,8 @@ class _Search:
                       'options_hash': self.options_hash,
                       'seed': self.seed, 'stack': frames,
                       'rng_state': [rng[0], list(rng[1]), rng[2]],
-                      'counters': {key: getattr(self, key) for key in _COUNTERS}})
+                      'counters': {key: getattr(self, key) for key in _COUNTERS},
+                      'adaptive_policy': _copy_policy(self.committed_policy)})
 
     @staticmethod
     def pending(domains, dirty, previous):
@@ -324,6 +361,7 @@ class _Search:
                     frames.append(self.pending(domains.copy(), dirty, previous))
                     break
                 current = domains.copy()
+                self.policy = _copy_policy(description['adaptive_before'])
                 matching = self.prepare(current, dirty, previous, index)
                 if matching is None:
                     raise ValueError('DFS checkpoint contains an impossible branch')
@@ -342,6 +380,8 @@ class _Search:
             self.rng.setstate(self.committed_rng)
             self.stack = frames
             self.restore_complete = True
+            self.policy = _copy_policy(self.input_checkpoint['adaptive_policy'])
+            self.committed_policy = _copy_policy(self.policy)
         finally:
             for key, value in saved_counters.items():
                 setattr(self, key, value)
@@ -358,10 +398,12 @@ class _Search:
             support = source & states
             if support:
                 candidates = self.colors[target_side].get(color, 0)
-                pieces = self.pieces(support)
-                if pieces & (pieces - 1) == 0:
+                # Only singleton piece identity matters here; constructing
+                # the full four-shift projection for every color is wasteful.
+                piece_states = 15 << ((support.bit_length() - 1) & ~3)
+                if support & ~piece_states == 0:
                     # A neighbor cannot reuse the only supporting piece.
-                    candidates &= ~(15 * pieces)
+                    candidates &= ~piece_states
                 allowed |= candidates
         return allowed
 
@@ -509,6 +551,44 @@ class _Search:
         self.independent_completions += 1
         return board
 
+    def optional_due(self, name):
+        """Work-based scheduling only; wall-clock timing never changes a branch.
+
+        Optional filters earn more frequent execution by removing states or
+        proving a contradiction. Unproductive/expensive filters back off for
+        at most sixteen opportunities, so usefulness is periodically sampled.
+        """
+        if not self.options['adaptive']:
+            return True
+        policy = self.policy[name]
+        if policy['cooldown']:
+            policy['cooldown'] -= 1
+            policy['skips'] += 1
+            return False
+        return True
+
+    def optional_run(self, name, domains, function, failed):
+        if not self.options['adaptive']:
+            return function()
+        before = sum(domain.bit_count() for domain in domains)
+        work, started = self.work_ticks, time.perf_counter()
+        result = function()
+        self.adaptive_seconds[name] += time.perf_counter() - started
+        if self.options['adaptive']:
+            cost = max(1, self.work_ticks - work)
+            removed = max(0, before - sum(domain.bit_count() for domain in domains))
+            contradiction = bool(failed(result))
+            policy = self.policy[name]
+            policy['calls'] += 1
+            policy['work'] += cost
+            policy['removed'] += removed
+            policy['failures'] += int(contradiction)
+            benefit = removed + (before if contradiction else 0)
+            interval = min(16, max(1, (cost + 16 * benefit - 1) // (16 * benefit))) if benefit else min(16, 2 * policy['interval'])
+            policy['interval'] = interval
+            policy['cooldown'] = interval - 1
+        return result
+
     def propagate(self, domains, dirty, previous):
         queue = deque(dirty)
         queued = set(dirty)
@@ -561,8 +641,8 @@ class _Search:
                     if not reduce(cell, domains[cell] & (required * 15)):
                         return None
             if not queue:
-                if self.rules is not None:
-                    ok, changed = self.rules.apply(domains)
+                if self.rules is not None and self.optional_due('rules'):
+                    ok, changed = self.optional_run('rules', domains, lambda: self.rules.apply(domains), lambda result: not result[0])
                     if not ok:
                         return None
                     if changed:
@@ -573,8 +653,8 @@ class _Search:
                 matched = self.matching(domains, previous)
                 if matched is None:
                     return None
-                if self.options['gac']:
-                    changed = self.filter_matching(domains, matched)
+                if self.options['gac'] and self.optional_due('gac'):
+                    changed = self.optional_run('gac', domains, lambda: self.filter_matching(domains, matched), lambda result: False)
                     if changed:
                         self.propagations += len(changed)
                         queue.extend(sorted(changed))
@@ -587,6 +667,11 @@ class _Search:
         matched = self.propagate(domains, dirty, previous)
         if matched is None or not self.options['probe'] or depth > self.options['probe_max_depth']:
             return matched
+        if not self.optional_due('probe'):
+            return matched
+        return self.optional_run('probe', domains, lambda: self.probe(domains, matched), lambda result: result is None)
+
+    def probe(self, domains, matched):
         eligible = [c for c, d in enumerate(domains) if 2 <= d.bit_count() <= self.options['probe_max_domain']]
         if not eligible:
             return matched
@@ -695,9 +780,13 @@ class _Search:
                 # Propagation and ordering work on a copy. Any interruption
                 # retains the whole pending node and the pre-order RNG state.
                 current = frame['domains'].copy()
+                adaptive_before = (_copy_policy(self.committed_policy) if self.options['adaptive']
+                                   else self.committed_policy)
+                self.policy = _copy_policy(adaptive_before) if self.options['adaptive'] else adaptive_before
                 self.rng.setstate(self.committed_rng)
                 matching = self.prepare(current, frame['dirty'], frame['matching'], depth)
                 if matching is None:
+                    self.committed_policy = _copy_policy(self.policy) if self.options['adaptive'] else self.policy
                     self.conflicts += 1
                     self.stack.pop()
                     continue
@@ -705,15 +794,19 @@ class _Search:
                     board = [domain.bit_length() - 1 for domain in current]
                     if not check_solution(self.problem, board):
                         raise AssertionError('DFS candidate failed independent exact-model validation')
+                    self.committed_policy = _copy_policy(self.policy)
                     return board
                 if self.options['independent_completion']:
                     board = self.independent_completion(current, matching)
                     if board is not None:
+                        self.committed_policy = _copy_policy(self.policy)
                         return board
                 kind, cell, candidates = self.choose_partition(current)
                 self.committed_rng = self.rng.getstate()
+                self.committed_policy = _copy_policy(self.policy) if self.options['adaptive'] else self.policy
                 frame = {'phase': 'branch', 'domains': current, 'matching': matching,
-                         'kind': kind, 'cell': cell, 'candidates': candidates, 'next': 0}
+                         'kind': kind, 'cell': cell, 'candidates': candidates, 'next': 0,
+                         'adaptive_before': adaptive_before}
                 self.stack[-1] = frame
             if frame['next'] == len(frame['candidates']):
                 self.stack.pop()
@@ -744,7 +837,7 @@ def solve(problem, seconds=10.0, seed=0, workers=1, should_stop=None, on_progres
     They need not be legal puzzle boards. Their votes break ties only after
     existing value-support ordering; no hint freezes or removes a candidate.
     All new pruning/branch options default off pending comparative benchmarks.
-    Checkpoint v3 binds the exact hints, normalized options, and ordering
+    Checkpoint v4 binds the exact hints, normalized options, and ordering
     version. Older checkpoints or changed settings are rejected; no file is
     modified and no frontier is silently restarted. Additional-rule counters
     describe the current invocation, including reconstruction and probes.

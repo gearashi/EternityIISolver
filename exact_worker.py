@@ -1,7 +1,7 @@
-"""Offline CPU worker for the complete five-clue Eternity II problem.
+"""Offline CPU/hybrid worker for the complete five-clue Eternity II problem.
 
 The persistent dashboard owns HTTP. This worker never starts a server, imports
-a GPU backend unless hybrid is selected. It never contacts the project or
+a GPU backend unless hybrid or GPU matching is selected. It never contacts the project or
 treats a regional repair as a solution.
 """
 from __future__ import annotations
@@ -30,9 +30,9 @@ from validator import load_bundle, validate_board
 MEMORY_SOFT_LIMIT_MB = 2048.0
 UNBOUNDED_SECONDS = 1.0e12  # Finite native API horizon, approximately 31,688 years.
 SCOPE = 'full-16x16-five-clue-puzzle-all-480-edges'
-ENGINES = ('dfs', 'sat', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned')
-REPAIR_ENGINES = ('optimize', 'core-repair', 'matching')
-PRUNING_PROFILES = ('baseline', 'strong', 'full')
+ENGINES = ('dfs', 'sat', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching')
+REPAIR_ENGINES = ('optimize', 'core-repair', 'matching', 'sat-optimize', 'gpu-matching')
+PRUNING_PROFILES = ('baseline', 'strong', 'full', 'adaptive')
 DEFAULT_SEED = 20261007
 
 
@@ -71,7 +71,9 @@ def _backend(engine):
         from exact_optimize import optimize as solve
     elif engine == 'core-repair':
         from exact_optimize import core_guided_repair as solve
-    elif engine == 'matching':
+    elif engine == 'sat-optimize':
+        from exact_sat_optimize import optimize as solve
+    elif engine in ('matching', 'gpu-matching'):
         from smart_repair import solve
     elif engine == 'partitioned':
         from exact_parallel import solve
@@ -80,7 +82,7 @@ def _backend(engine):
     return solve
 
 
-def _settings(engine, seconds, seed, workers, port, backend='auto', replicas=4096, pruning='baseline'):
+def _settings(engine, seconds, seed, workers, port, backend='auto', replicas=4096, pruning='baseline', gpu_repair_batch=16):
     if engine not in ENGINES:
         raise ValueError('Unknown exact engine')
     if seconds is not None and (type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0):
@@ -90,13 +92,15 @@ def _settings(engine, seconds, seed, workers, port, backend='auto', replicas=409
     if type(workers) is not int or not 1 <= workers <= (4 if engine in ('cp-sat', 'optimize', 'partitioned') else 1):
         raise ValueError('CP-SAT, optimization and partitioned DFS permit one to four workers; other CPU engines require one')
     if pruning not in PRUNING_PROFILES:
-        raise ValueError('pruning must be baseline, strong or full')
+        raise ValueError('pruning must be baseline, strong, full or adaptive')
+    if type(gpu_repair_batch) is not int or not 1 <= gpu_repair_batch <= 64:
+        raise ValueError('GPU repair batch must be 1..64 neighborhoods')
     if type(port) is not int or not 1 <= port <= 65535:
         raise ValueError('port must be 1..65535')
     if backend not in ('auto', 'cuda', 'opencl') or type(replicas) is not int or not 32 <= replicas <= 32768:
         raise ValueError('Hybrid requires a valid GPU backend and batch size32..32768')
     return {'backend': backend, 'replicas': replicas, 'engine': engine, 'seconds': seconds, 'seed': seed, 'workers': workers,
-            'port': port, 'memory_soft_limit_mb': MEMORY_SOFT_LIMIT_MB, 'scope': SCOPE, 'pruning': pruning}
+            'port': port, 'memory_soft_limit_mb': MEMORY_SOFT_LIMIT_MB, 'scope': SCOPE, 'pruning': pruning, 'gpu_repair_batch': gpu_repair_batch}
 
 
 def _known_cached_board(home, board, digest):
@@ -160,14 +164,14 @@ def _load_or_sample_hints(path, bundle, fingerprint, seed, backend, replicas, se
 
 
 def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, workers=1,
-             preserve_stop=False, port=8765, fresh_exact=False, backend='auto', replicas=4096, pruning='baseline', solver_factory=None, sampler_factory=None):
+             preserve_stop=False, port=8765, fresh_exact=False, backend='auto', replicas=4096, pruning='baseline', gpu_repair_batch=16, solver_factory=None, sampler_factory=None):
     """Run one exact search, returning an exit code; injected factories are for tests.
 
     A solver factory receives the engine name and returns its solve callable.
     Native SAT/CP search state is not resumed. DFS checkpoints are used only
     when the selected implementation exposes its explicit checkpoint API.
     """
-    settings = _settings(engine, seconds, seed, workers, port, backend, replicas, pruning)
+    settings = _settings(engine, seconds, seed, workers, port, backend, replicas, pruning, gpu_repair_batch)
     settings['fresh_exact'] = bool(fresh_exact)
     home = state_root(state_dir)
     runtime = home / 'runtime'
@@ -203,7 +207,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
               'counter_semantics': 'local exact-search branches/conflicts; not BOINC nodes or credit',
               'memory_soft_limit_mb': MEMORY_SOFT_LIMIT_MB, 'resumed': False,
               'resume_capability': 'none; each native SAT/CP run starts a new search'}
-    if engine == 'matching':
+    if engine in ('matching', 'gpu-matching'):
         status.update(branches=None, conflicts=None,
                       counter_semantics='completed repair neighborhoods and recombinations; not exhaustive branches or BOINC credit')
     session = {'schema_version': 1, 'settings': settings, 'started_at': status['start_time'],
@@ -256,13 +260,17 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             for key in ('branches', 'conflicts', 'max_depth', 'propagations', 'matching_checks',
                         'matching_failures', 'build_seconds', 'variables', 'clauses', 'table_rows',
                         'neighborhoods', 'recombinations', 'rounds', 'free_cells', 'cores',
-                        'tickets_total', 'tickets_completed',
+                        'tickets_total', 'tickets_completed', 'split_tickets', 'queue_records', 'cost_batches', 'cost_pairs',
+                        'cost_kernel_seconds', 'cost_elapsed_seconds', 'target_score', 'hitting_set_seconds',
                         'gac_checks', 'gac_removed', 'independent_completions', 'probe_checks', 'probe_rejections'):
                 value = progress.get(key)
                 if type(value) in (int, float) and math.isfinite(value) and value >= 0:
                     status[key] = value
                     if key == 'branches':
                         status['exact_counters_available'] = True
+            for key in ('cost_backend', 'cost_device'):
+                if isinstance(progress.get(key), str):
+                    status[key] = progress[key][:160]
             phase = progress.get('phase')
             if isinstance(phase, str):
                 status['exact_phase'] = phase[:80]
@@ -360,8 +368,10 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                 solve_args['options'] = {} if pruning == 'baseline' else {
                     'gac': True, 'independent_completion': True, 'dual_branch': True,
                     'edge_branch': True, 'extra_rules': None}
-                if pruning == 'full':
+                if pruning in ('full', 'adaptive'):
                     solve_args['options'].update(probe=True, extra_rules={})
+                if pruning == 'adaptive':
+                    solve_args['options']['adaptive'] = True
             if engine == 'partitioned':
                 queue_path = runtime / 'exact-partitioned-queue.json'
                 if fresh_exact and queue_path.exists():
@@ -373,7 +383,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             if engine in REPAIR_ENGINES:
                 solve_args.update(reference=list(best), on_improvement=on_improvement)
                 status['resume_capability'] = 'saved best board only; starts a fresh repair search'
-                if engine == 'matching':
+                if engine in ('matching', 'gpu-matching'):
                     from smart_repair import cached_parents
                     try:
                         solve_args['parents'] = cached_parents(problem, home / 'library' / 'library.sqlite3', limit=32)
@@ -381,6 +391,10 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                         solve_args['parents'] = []
                         status['cached_parents_warning'] = f'Local parent cache unavailable: {type(exc).__name__}'
                     status['cached_parent_count'] = len(solve_args['parents'])
+                    if engine == 'gpu-matching':
+                        solve_args.update(gpu_backend=backend, gpu_batch_size=gpu_repair_batch,
+                                          gpu_cache_dir=runtime / 'gpu-cache', gpu_allow_cpu_fallback=False)
+                        status['compute_device'] = 'GPU placement costs + CPU exact assignment'
             checkpoint_path = runtime / ('exact-hybrid-dfs-checkpoint.json' if engine == 'hybrid' else 'exact-dfs-checkpoint.json')
             hint_solution = None
             if engine == 'hybrid':
@@ -547,6 +561,7 @@ def main(argv=None, solver_factory=None):
     parser.add_argument('--workers', type=int, default=1)
     parser.add_argument('--backend', choices=('auto','cuda','opencl'), default='auto')
     parser.add_argument('--replicas', type=int, default=4096, help='Hybrid GPU sample batch32..32768')
+    parser.add_argument('--gpu-repair-batch', type=int, default=16, help='GPU matching neighborhoods per batch (1..64)')
     parser.add_argument('--pruning', choices=PRUNING_PROFILES, default='baseline', help='DFS pruning profile; changing profile requires a compatible checkpoint or --fresh-exact')
     parser.add_argument('--preserve-stop', action='store_true')
     parser.add_argument('--fresh-exact', action='store_true', help='Archive the existing DFS checkpoint and start from the full puzzle')

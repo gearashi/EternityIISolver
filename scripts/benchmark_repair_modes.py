@@ -22,12 +22,13 @@ from search_resources import peak_memory_mb
 from validator import load_bundle,validate_board
 import exact_optimize
 import exact_sat
+import exact_sat_optimize
 import smart_repair
 
 MODES={'sat-baseline':12.0,'sat-reverse-support':12.0,'score-optimization':18.0,
-       'core-repair':18.0,'independent-matching':5.0,'cycle-recombination':12.0}
+       'core-repair':18.0,'core-greedy':18.0,'sat-score':18.0,'sat-score-no-hints':18.0,'independent-matching':5.0,'cycle-recombination':12.0}
 FILES=('exact_sat.py','exact_optimize.py','smart_repair.py','exact_model.py','validator.py',
-       'scripts/benchmark_repair_modes.py')
+       'exact_sat_optimize.py','binary_pairwise.py','gpu_assignment.py','scripts/benchmark_repair_modes.py')
 
 
 def hashes():
@@ -60,15 +61,20 @@ def child(args):
         actual=independent(update['board'])
         if actual!=update['score']: raise AssertionError('Callback score disagrees with official validator')
         improvements.append({**update,'board_sha256':board_hash(update['board'])})
-    if args.mode.startswith('sat-'):
+    if args.mode in ('sat-score','sat-score-no-hints'):
+        result=exact_sat_optimize.optimize(problem,reference,seconds=args.seconds,seed=args.seed,workers=1,
+                                           should_stop=stopped,on_improvement=improvement,
+                                           reference_phases=args.mode=='sat-score')
+    elif args.mode.startswith('sat-'):
         result=exact_sat.solve(problem,seconds=args.seconds,seed=args.seed,workers=1,
                                should_stop=stopped,reverse_support=args.mode=='sat-reverse-support')
     elif args.mode=='score-optimization':
         result=exact_optimize.optimize(problem,reference,seconds=args.seconds,seed=args.seed,workers=1,
                                         should_stop=stopped,on_improvement=improvement)
-    elif args.mode=='core-repair':
+    elif args.mode in ('core-repair','core-greedy'):
         result=exact_optimize.core_guided_repair(problem,reference,seconds=args.seconds,seed=args.seed,workers=1,
-                                                should_stop=stopped,on_improvement=improvement)
+                                                should_stop=stopped,on_improvement=improvement,
+                                                release_policy='greedy' if args.mode=='core-greedy' else 'hitting-set')
     elif args.mode=='independent-matching':
         results=[];best=reference;best_score=466
         for index in range(32):

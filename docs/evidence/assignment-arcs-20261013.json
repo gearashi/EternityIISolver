@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "purpose": "Isolate arc loading plus exact assignment, excluding matrix generation",
+  "problem_sha256": "a49104cf70448f0dda0974c1cfc0d9b40bb53ebd88faf861e0bcabd9e5cf1b58",
+  "input_sha256": [
+    "95ead0aea0b12f62d7cea42aeae4e979164524335c137f1a3162abb8c919f56f",
+    "f7da1869366a5903495f73b937d65004ada5a95502ccb97bae4c22a383ecac46",
+    "f93acd4a3b4e80567ff02fae5fcd75853c774aa6cc825d9aee03dc1ecc45d360"
+  ],
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "source_sha256": {
+    "smart_repair.py": "a0aea595db44d061fb91cd77848913b819bf4920bb61b1714567c4d2663983de",
+    "gpu_assignment.py": "fb884bcae53bfde7bab37eef05a6d2bf377b64d9350617969a26feb717ee2da8",
+    "scripts/benchmark_assignment_arcs.py": "a13c95647d27f338742d78bb6085524ac7a4b25fc663865cea5bfa313fc7f957"
+  },
+  "sample_count": 30,
+  "samples": [
+    {
+      "repeat": 0,
+      "case": 0,
+      "bulk": false,
+      "seconds": 0.07102939998731017,
+      "score": 389
+    },
+    {
+      "repeat": 0,
+      "case": 0,
+      "bulk": true,
+      "seconds": 0.029319300083443522,
+      "score": 389
+    },
+    {
+      "repeat": 0,
+      "case": 1,
+      "bulk": false,
+      "seconds": 0.06493219989351928,
+      "score": 376
+    },
+    {
+      "repeat": 0,
+      "case": 1,
+      "bulk": true,
+      "seconds": 0.036354799987748265,
+      "score": 376
+    },
+    {
+      "repeat": 0,
+      "case": 2,
+      "bulk": false,
+      "seconds": 0.05298649985343218,
+      "score": 307
+    },
+    {
+      "repeat": 0,
+      "case": 2,
+      "bulk": true,
+      "seconds": 0.05286069982685149,
+      "score": 307
+    },
+    {
+      "repeat": 1,
+      "case": 0,
+      "bulk": true,
+      "seconds": 0.037942699855193496,
+      "score": 389
+    },
+    {
+      "repeat": 1,
+      "case": 0,
+      "bulk": false,
+      "seconds": 0.0681823999620974,
+      "score": 389
+    },
+    {
+      "repeat": 1,
+      "case": 1,
+      "bulk": true,
+      "seconds": 0.05144890001975,
+      "score": 376
+    },
+    {
+      "repeat": 1,
+      "case": 1,
+      "bulk": false,
+      "seconds": 0.05080450000241399,
+      "score": 376
+    },
+    {
+      "repeat": 1,
+      "case": 2,
+      "bulk": true,
+      "seconds": 0.03969660005532205,
+      "score": 307
+    },
+    {
+      "repeat": 1,
+      "case": 2,
+      "bulk": false,
+      "seconds": 0.043847099877893925,
+      "score": 307
+    },
+    {
+      "repeat": 2,
+      "case": 0,
+      "bulk": false,
+      "seconds": 0.08329779980704188,
+      "score": 389
+    },
+    {
+      "repeat": 2,
+      "case": 0,
+      "bulk": true,
+      "seconds": 0.0678408001549542,
+      "score": 389
+    },
+    {
+      "repeat": 2,
+      "case": 1,
+      "bulk": false,
+      "seconds": 0.0562521000392735,
+      "score": 376
+    },
+    {
+      "repeat": 2,
+      "case": 1,
+      "bulk": true,
+      "seconds": 0.05401490000076592,
+      "score": 376
+    },
+    {
+      "repeat": 2,
+      "case": 2,
+      "bulk": false,
+      "seconds": 0.057141700061038136,
+      "score": 307
+    },
+    {
+      "repeat": 2,
+      "case": 2,
+      "bulk": true,
+      "seconds": 0.054931099992245436,
+      "score": 307
+    },
+    {
+      "repeat": 3,
+      "case": 0,
+      "bulk": true,
+      "seconds": 0.06498369993641973,
+      "score": 389
+    },
+    {
+      "repeat": 3,
+      "case": 0,
+      "bulk": false,
+      "seconds": 0.08266469999216497,
+      "score": 389
+    },
+    {
+      "repeat": 3,
+      "case": 1,
+      "bulk": true,
+      "seconds": 0.03648559981957078,
+      "score": 376
+    },
+    {
+      "repeat": 3,
+      "case": 1,
+      "bulk": false,
+      "seconds": 0.0783701001200825,
+      "score": 376
+    },
+    {
+      "repeat": 3,
+      "case": 2,
+      "bulk": true,
+      "seconds": 0.038424700032919645,
+      "score": 307
+    },
+    {
+      "repeat": 3,
+      "case": 2,
+      "bulk": false,
+      "seconds": 0.08731229999102652,
+      "score": 307
+    },
+    {
+      "repeat": 4,
+      "case": 0,
+      "bulk": false,
+      "seconds": 0.05856240005232394,
+      "score": 389
+    },
+    {
+      "repeat": 4,
+      "case": 0,
+      "bulk": true,
+      "seconds": 0.033053699880838394,
+      "score": 389
+    },
+    {
+      "repeat": 4,
+      "case": 1,
+      "bulk": false,
+      "seconds": 0.07257060008123517,
+      "score": 376
+    },
+    {
+      "repeat": 4,
+      "case": 1,
+      "bulk": true,
+      "seconds": 0.044817900052294135,
+      "score": 376
+    },
+    {
+      "repeat": 4,
+      "case": 2,
+      "bulk": false,
+      "seconds": 0.04753960017114878,
+      "score": 307
+    },
+    {
+      "repeat": 4,
+      "case": 2,
+      "bulk": true,
+      "seconds": 0.028995600063353777,
+      "score": 307
+    }
+  ],
+  "elapsed_seconds": 2.969000000040978,
+  "all_boards_equal": true,
+  "seconds_budget": 20
+}

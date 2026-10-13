@@ -255,6 +255,7 @@ class AdditionalRules:
 
     def _blocks(self, domains, changed):
         budget = self.options['block_total_pairs']
+        examined_pairs = 0  # Local cadence keeps adaptive work stable on replay.
         for cells in self.blocks:
             self.check()
             a, b, c, d = cells
@@ -274,7 +275,8 @@ class AdditionalRules:
                 self.check()
                 for sc in _bits(domains[c]):
                     self.counters['block_pairs'] += 1
-                    if self.counters['block_pairs'] % 64 == 0:
+                    examined_pairs += 1
+                    if examined_pairs % 64 == 0:
                         self.check()
                     if sa // 4 == sc // 4:
                         continue

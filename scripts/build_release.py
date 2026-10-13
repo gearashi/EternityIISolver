@@ -102,7 +102,7 @@ def main():
             subprocess.run([sys.executable, str(ROOT / "scripts" / "smoke_exact_app.py"),
                             "--executable", str(executable), "--output", str(ROOT / "build" / "exact-app-smoke.json")],
                            cwd=temporary, check=True, timeout=180)
-            for command in ("diagnose", "boinc", "inspect-cpu", "export-best", "exact", "diagnose-exact", "diagnose-hybrid"):
+            for command in ("diagnose", "boinc", "inspect-cpu", "export-best", "exact", "diagnose-exact", "diagnose-hybrid", "diagnose-assignment"):
                 subprocess.run([str(executable), command, "--help"], cwd=temporary,
                                capture_output=True, text=True, check=True, timeout=30)
     # Top-level readable documentation accompanies the app and its dependency notices.

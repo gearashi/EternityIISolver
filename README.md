@@ -12,7 +12,7 @@ The [bounded sampler tests](docs/EXACT_SEARCH.md#measured-gpu-sampling-9-october
 
 BOINC-compatible worker development and the GPU DFS port remain **on hold**. Standalone CPU exact search does not execute assigned production tickets or submit results. The read-only workunit inspector remains available for examining saved inputs.
 
-**Version boundary:** v0.2.2 replaces v0.2.1's optional background library downloads with a manual **Download and merge** button. Opening the app never starts a library download, and old automatic-download settings are ignored. Existing caches and search state are retained. Search engines and measured results remain those introduced in v0.2.0; this update makes no claim of a better puzzle solution.
+**Library behavior retained from v0.2.2:** v0.2.2 replaces v0.2.1's optional background library downloads with a manual **Download and merge** button. Opening the app never starts a library download, and old automatic-download settings are ignored. Existing caches and search state are retained. Version 0.3.0 adds the experimental search methods described below; no better puzzle solution is claimed.
 
 ## Download and start
 
@@ -25,7 +25,7 @@ Get the archive matching your computer from [Releases](https://github.com/gearas
 | macOS Intel | x86-64 | CPU DFS/SAT/CP-SAT; OpenCL repair | A GPU exposed by the available macOS OpenCL runtime |
 | macOS Apple Silicon | ARM64 | CPU DFS/SAT/CP-SAT; OpenCL repair | A GPU exposed by the available macOS OpenCL runtime |
 
-Open `EternityIISolver.exe` on Windows, `EternityIISolver.app` on macOS, or `EternityIISolver` on Linux. This opens the dashboard at [127.0.0.1:8765](http://127.0.0.1:8765/) **without starting a search**. Choose **CPU exact / hybrid** or **GPU board repair**, then select the engine and click **Start**. CPU-only DFS, SAT, and CP-SAT need no GPU driver. DFS is the recommended fallback when native SAT or CP-SAT encoding is too costly; it is a Python baseline, with no claim to match an optimized native DFS implementation. The hybrid engine is experimental and needs a supported GPU for a fresh sampling stage.
+Open `EternityIISolver.exe` on Windows, `EternityIISolver.app` on macOS, or `EternityIISolver` on Linux. This opens the dashboard at [127.0.0.1:8765](http://127.0.0.1:8765/) **without starting a search**. Choose **Advanced search** or **GPU board repair**, then select the engine and click **Start**. CPU-only DFS, SAT, and CP-SAT need no GPU driver. DFS is the recommended fallback when native SAT or CP-SAT encoding is too costly; it is a Python baseline, with no claim to match an optimized native DFS implementation. The hybrid engine is experimental and needs a supported GPU for a fresh sampling stage.
 
 DFS, SAT, and hybrid use one CPU worker. CP-SAT allows **1–4** workers. GPU repair retains its backend selector and **32–32,768** parallel searches (default **4096**); those are GPU replicas, not CPU workers. Hybrid exposes the same numeric control as **GPU sample batch** for its short sampling stage. More replicas, larger batches, or more workers are not guaranteed to be faster. Stop the active search before changing settings.
 
@@ -82,7 +82,7 @@ python -m pip install ".[cuda]"
 eternity-solver open
 ```
 
-A GitHub release wheel can also be installed with `python -m pip install path/to/eternity_ii_solver-0.2.2-py3-none-any.whl` when that release is available. The core dependencies include OR-Tools 9.15 and python-sat; no separate exact-search extra is required. Install the CUDA extra from the source checkout if desired. Search and manual export work offline. Requested library-archive downloads, release/dependency downloads, and opening external documentation require internet access. The repository is not claimed to be published on PyPI.
+A GitHub release wheel can also be installed with `python -m pip install path/to/eternity_ii_solver-0.3.0-py3-none-any.whl` when that release is available. The core dependencies include OR-Tools 9.15 and python-sat; no separate exact-search extra is required. Install the CUDA extra from the source checkout if desired. Search and manual export work offline. Requested library-archive downloads, release/dependency downloads, and opening external documentation require internet access. The repository is not claimed to be published on PyPI.
 
 PyOpenCL and a hardware-vendor OpenCL implementation are separate requirements. A successful Python installation alone does not supply an AMD/Intel/NVIDIA GPU driver. See [PyOpenCL installation](https://documen.tician.de/pyopencl/misc.html#installation) and [CuPy installation](https://docs.cupy.dev/en/stable/install.html) for supported runtime configurations.
 
@@ -114,7 +114,7 @@ A project message supplied by the user reports that the project's tested GPU DFS
 
 ## Experimental search improvements
 
-The development build adds selectable strong DFS pruning, explicit parallel DFS partitions, CP-SAT score optimization, assumption-core repair, and matching/cycle board repair. See [smart-search methods and evidence](docs/SMART_SEARCH.md). These are measured experiments, not a claim of a 480 solution or a universal speedup. The ordinary GPU solver remains available. All workers run offline; only manual archive downloads contact the library.
+Version 0.3.0 adds selectable strong/adaptive DFS pruning, dynamic parallel DFS partitions, incremental SAT and CP-SAT score optimization, conflict-core hitting-set repair, GPU-batched matching costs and exact cycle board repair. GPU matching uses a separate neighborhood batch control; the CPU performs exact assignments and validation. See [smart-search methods and evidence](docs/SMART_SEARCH.md). These are measured experiments, not a claim of a 480 solution or a universal speedup. The ordinary GPU solver remains available. All workers run offline; only manual archive downloads contact the library.
 
 ## Search and validation
 

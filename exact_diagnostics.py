@@ -24,7 +24,7 @@ def diagnose(engine='all', seconds=5):
 
 def diagnose_smart(seconds=5):
     """Exercise every new dependency in a frozen process, including spawn."""
-    import exact_dfs,exact_optimize,exact_parallel,smart_repair
+    import exact_dfs,exact_optimize,exact_parallel,smart_repair,exact_sat_optimize
     problem,known=generated_problem(3,5,101,1)
     reference=list(known)
     corners=[c for c in (0,2,6,8) if c not in problem.fixed]
@@ -34,6 +34,8 @@ def diagnose_smart(seconds=5):
     results=[]
     for name,run in (
         ('strong-dfs',lambda:exact_dfs.solve(problem,seconds=seconds,options=dict(gac=True,independent_completion=True,dual_branch=True,edge_branch=True,extra_rules={}))),
+        ('adaptive-dfs',lambda:exact_dfs.solve(problem,seconds=seconds,options=dict(gac=True,independent_completion=True,dual_branch=True,edge_branch=True,probe=True,extra_rules={},adaptive=True))),
+        ('sat-optimize',lambda:exact_sat_optimize.optimize(problem,reference,seconds=seconds)),
         ('partitioned',lambda:exact_parallel.solve(problem,seconds=seconds,workers=2)),
         ('optimize',lambda:exact_optimize.optimize(problem,reference,seconds=seconds)),
         ('core-repair',lambda:exact_optimize.core_guided_repair(problem,reference,seconds=seconds)),

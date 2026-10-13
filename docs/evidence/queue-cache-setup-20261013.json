@@ -1,0 +1,134 @@
+{
+  "schema": 1,
+  "utc": "2026-10-13T18:02:16.337004+00:00",
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19044-SP0",
+  "problem_sha256": "975dc98ccb72aeb53cc854e5de30c69b84dd9290763d28c4ba485f4b4f3713db",
+  "source_sha256": {
+    "exact_parallel.py": "b62fc4d81fa54db6538bbbc7ccd2800792262be75c59f30042b8e47bc715b1d4",
+    "exact_dfs.py": "a0c6743c2b51eb9cf5d80814162684775a18649015f07ee51af52a3b5ed52839",
+    "exact_model.py": "da42732e62faadfa40eae9ab8e2674ff5eb9a92965f2606ae73bf3b8c82d5279",
+    "validator.py": "a2266ad4bb2ce0963ca02395fd99a13007415550d285364c886114b3f8aca56a",
+    "search_resources.py": "32adb88eab7ade8555745157b834625ba0566e3b621b659182b0fdf16a6ab81d"
+  },
+  "root_tickets": 4,
+  "setup_sequence": "One queue schema/checkpoint validation, then three task+identity resolutions per pending ticket, modeling dispatch/accept/setup reuse. Semantic DFS replay unchanged and omitted from these setup-only measurements.",
+  "limits": {
+    "repeats": 3,
+    "max_wall_seconds": 40,
+    "workers": 1,
+    "soft_memory_mb": 1024
+  },
+  "non_claims": [
+    "Setup reuse does not change pruning, frontier coverage or time to solve Eternity II.",
+    "Exploratory order-reversed desktop timing, no CPU search or GPU work.",
+    "No canonical runtime writes or network."
+  ],
+  "trials": [
+    {
+      "repeat": 0,
+      "cached": false,
+      "seconds": 4.6560000001918525,
+      "setup_cache": {
+        "enabled": false,
+        "task_builds": 16,
+        "task_hits": 0,
+        "hash_builds": 16,
+        "hash_hits": 0,
+        "retained_tasks": 0,
+        "retained_hashes": 0
+      },
+      "fingerprint": "62525110524bb1de7fa7a4bfc4b054403b8ed35e5fba2057c2e5ed07f35d56fb",
+      "peak_memory_mb": 37.8359375
+    },
+    {
+      "repeat": 0,
+      "cached": true,
+      "seconds": 0.46899999980814755,
+      "setup_cache": {
+        "enabled": true,
+        "task_builds": 4,
+        "task_hits": 12,
+        "hash_builds": 4,
+        "hash_hits": 12,
+        "retained_tasks": 4,
+        "retained_hashes": 4
+      },
+      "fingerprint": "62525110524bb1de7fa7a4bfc4b054403b8ed35e5fba2057c2e5ed07f35d56fb",
+      "peak_memory_mb": 37.8359375
+    },
+    {
+      "repeat": 1,
+      "cached": true,
+      "seconds": 0.4220000000204891,
+      "setup_cache": {
+        "enabled": true,
+        "task_builds": 4,
+        "task_hits": 12,
+        "hash_builds": 4,
+        "hash_hits": 12,
+        "retained_tasks": 4,
+        "retained_hashes": 4
+      },
+      "fingerprint": "62525110524bb1de7fa7a4bfc4b054403b8ed35e5fba2057c2e5ed07f35d56fb",
+      "peak_memory_mb": 37.8359375
+    },
+    {
+      "repeat": 1,
+      "cached": false,
+      "seconds": 4.375,
+      "setup_cache": {
+        "enabled": false,
+        "task_builds": 16,
+        "task_hits": 0,
+        "hash_builds": 16,
+        "hash_hits": 0,
+        "retained_tasks": 0,
+        "retained_hashes": 0
+      },
+      "fingerprint": "62525110524bb1de7fa7a4bfc4b054403b8ed35e5fba2057c2e5ed07f35d56fb",
+      "peak_memory_mb": 38.39453125
+    },
+    {
+      "repeat": 2,
+      "cached": false,
+      "seconds": 4.922000000020489,
+      "setup_cache": {
+        "enabled": false,
+        "task_builds": 16,
+        "task_hits": 0,
+        "hash_builds": 16,
+        "hash_hits": 0,
+        "retained_tasks": 0,
+        "retained_hashes": 0
+      },
+      "fingerprint": "62525110524bb1de7fa7a4bfc4b054403b8ed35e5fba2057c2e5ed07f35d56fb",
+      "peak_memory_mb": 38.39453125
+    },
+    {
+      "repeat": 2,
+      "cached": true,
+      "seconds": 0.4529999999795109,
+      "setup_cache": {
+        "enabled": true,
+        "task_builds": 4,
+        "task_hits": 12,
+        "hash_builds": 4,
+        "hash_hits": 12,
+        "retained_tasks": 4,
+        "retained_hashes": 4
+      },
+      "fingerprint": "62525110524bb1de7fa7a4bfc4b054403b8ed35e5fba2057c2e5ed07f35d56fb",
+      "peak_memory_mb": 38.39453125
+    }
+  ],
+  "source_sha256_after": {
+    "exact_parallel.py": "b62fc4d81fa54db6538bbbc7ccd2800792262be75c59f30042b8e47bc715b1d4",
+    "exact_dfs.py": "a0c6743c2b51eb9cf5d80814162684775a18649015f07ee51af52a3b5ed52839",
+    "exact_model.py": "da42732e62faadfa40eae9ab8e2674ff5eb9a92965f2606ae73bf3b8c82d5279",
+    "validator.py": "a2266ad4bb2ce0963ca02395fd99a13007415550d285364c886114b3f8aca56a",
+    "search_resources.py": "32adb88eab7ade8555745157b834625ba0566e3b621b659182b0fdf16a6ab81d"
+  },
+  "sources_unchanged": true,
+  "wall_seconds": 15.297000000020489
+}

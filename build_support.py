@@ -36,6 +36,13 @@ DISTRIBUTION_DOCUMENTS = (
     "docs/evidence/smart-pruning-20261013.json", "docs/evidence/smart-pruning-repeats-20261013.json",
     "docs/evidence/smart-repair-baseline-20261013.json", "docs/evidence/smart-core-incremental-20261013.json",
     "docs/evidence/smart-search-manifest.json",
+    "docs/evidence/assignment-validation-20261013.json", "docs/evidence/assignment-validation-20261013.sources.zip",
+    "docs/evidence/queue-cache-setup-20261013.json", "docs/evidence/queue-cache-setup-20261013.sources.zip",
+    "docs/evidence/assignment-arcs-20261013.json", "docs/evidence/assignment-arcs-20261013.sources.zip",
+    "docs/evidence/dfs-precomputed-complements-20261013.json", "docs/evidence/dfs-precomputed-complements-20261013.sources.zip", "docs/SEARCH_RESEARCH.md",
+    "docs/evidence/inventory-symmetry-20261013.json", "docs/evidence/dfs-supported-bitmask-20261013.json", "docs/evidence/dfs-supported-bitmask-20261013.sources.zip",
+    "docs/evidence/round2-pruning-20261013.json", "docs/evidence/round2-pruning-20261013.sources.zip",
+    "docs/evidence/round2-sat-core-20261013.json", "docs/evidence/round2-sat-core-20261013.sources.zip", "docs/evidence/round2-gpu-cycle-20261013.json", "docs/evidence/round2-gpu-cycle-20261013.sources.zip",
 )
 
 def documentation_files(root):

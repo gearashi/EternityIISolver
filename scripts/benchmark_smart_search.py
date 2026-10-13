@@ -47,6 +47,8 @@ VARIANTS = {
     'color-flow': one_rule('color_flow'),
     'all-additional-rules': {'extra_rules': {}},
     'cheap-plus-additional': dict(CHEAP, extra_rules={}),
+    'full': dict(CHEAP, extra_rules={}, probe=True),
+    'adaptive': dict(CHEAP, extra_rules={}, probe=True, adaptive=True),
 }
 CASES = ('generated-8', 'region-12', 'whole-five-clue')
 SOURCE_FILES = ('exact_dfs.py', 'exact_rules.py', 'exact_model.py', 'validator.py',
