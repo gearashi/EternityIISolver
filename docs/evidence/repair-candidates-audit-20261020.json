@@ -1,0 +1,787 @@
+{
+  "schema": "eternity-repair-candidates-evidence-audit/v1",
+  "passed": true,
+  "scope": "Audit of preserved benchmark evidence, not another solver run",
+  "source_files_verified": 22,
+  "parent_boards_independently_validated": 32,
+  "embedded_result_boards_independently_validated": 14,
+  "direct": {
+    "validation": {
+      "valid_cases": 16,
+      "invalid_cases": 16,
+      "median_seconds": {
+        "rebuild": 0.7029999999795109,
+        "reuse": 0.01600000006146729
+      },
+      "observed_microbenchmark_ratio": 43.93749982992449,
+      "records": [
+        {
+          "repeat": 0,
+          "mode": "rebuild",
+          "seconds": 0.6869999999180436,
+          "boards": 32
+        },
+        {
+          "repeat": 0,
+          "mode": "reuse",
+          "seconds": 0.01600000006146729,
+          "boards": 32
+        },
+        {
+          "repeat": 1,
+          "mode": "reuse",
+          "seconds": 0.030999999959021807,
+          "boards": 32
+        },
+        {
+          "repeat": 1,
+          "mode": "rebuild",
+          "seconds": 0.7190000000409782,
+          "boards": 32
+        },
+        {
+          "repeat": 2,
+          "mode": "rebuild",
+          "seconds": 0.7029999999795109,
+          "boards": 32
+        },
+        {
+          "repeat": 2,
+          "mode": "reuse",
+          "seconds": 0.015999999945051968,
+          "boards": 32
+        }
+      ]
+    },
+    "ties": {
+      "all_matrices_equal": true,
+      "all_primary_optima_equal": true,
+      "all_repairs_valid": true,
+      "distinct_equal_score_results_per_neighborhood": [
+        1,
+        1
+      ],
+      "records": [
+        {
+          "tie_seed": null,
+          "cpu_matrix_seconds": 0.1869999999180436,
+          "device_matrix_seconds": 0.1720000000204891,
+          "scores": [
+            466,
+            465
+          ],
+          "result_sha256": [
+            "944e1740af590f97e75e0914857df99391439128e949653a28bdb5b10f0af882",
+            "797c7c5d35f2f2146bae4f9e9a1291190354a7acc81b420111c7749c9cbfed77"
+          ]
+        },
+        {
+          "tie_seed": 17,
+          "cpu_matrix_seconds": 0.25,
+          "device_matrix_seconds": 0.0,
+          "scores": [
+            466,
+            465
+          ],
+          "result_sha256": [
+            "944e1740af590f97e75e0914857df99391439128e949653a28bdb5b10f0af882",
+            "797c7c5d35f2f2146bae4f9e9a1291190354a7acc81b420111c7749c9cbfed77"
+          ]
+        },
+        {
+          "tie_seed": 130,
+          "cpu_matrix_seconds": 0.26500000001396984,
+          "device_matrix_seconds": 0.0,
+          "scores": [
+            466,
+            465
+          ],
+          "result_sha256": [
+            "944e1740af590f97e75e0914857df99391439128e949653a28bdb5b10f0af882",
+            "797c7c5d35f2f2146bae4f9e9a1291190354a7acc81b420111c7749c9cbfed77"
+          ]
+        },
+        {
+          "tie_seed": 924,
+          "cpu_matrix_seconds": 0.23400000005494803,
+          "device_matrix_seconds": 0.0,
+          "scores": [
+            466,
+            465
+          ],
+          "result_sha256": [
+            "944e1740af590f97e75e0914857df99391439128e949653a28bdb5b10f0af882",
+            "797c7c5d35f2f2146bae4f9e9a1291190354a7acc81b420111c7749c9cbfed77"
+          ]
+        }
+      ],
+      "device_stats": {
+        "cost_backend": "cuda",
+        "cost_device": "NVIDIA GeForce RTX 2060",
+        "cost_batches": 4,
+        "cost_pairs": 126004,
+        "cost_kernel_seconds": 0.0008671360015869141,
+        "cost_fallback_reason": null,
+        "cost_diagnostic_cpu": false
+      }
+    },
+    "pairing": {
+      "random": {
+        "active_cycles": [
+          12,
+          13,
+          7,
+          10,
+          13,
+          11
+        ],
+        "mean_active_cycles": 11,
+        "parent_scores": [
+          [
+            466,
+            463
+          ],
+          [
+            466,
+            465
+          ],
+          [
+            466,
+            463
+          ],
+          [
+            466,
+            465
+          ],
+          [
+            466,
+            465
+          ],
+          [
+            466,
+            463
+          ]
+        ],
+        "result_scores": [
+          466,
+          466,
+          466,
+          466,
+          466,
+          466
+        ],
+        "gains_over_better_parent": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "selection_seconds": 0.0,
+        "cycle_seconds": 0.4989999998360872
+      },
+      "structured": {
+        "active_cycles": [
+          14,
+          13,
+          15,
+          11,
+          11,
+          14
+        ],
+        "mean_active_cycles": 13,
+        "parent_scores": [
+          [
+            465,
+            465
+          ],
+          [
+            465,
+            465
+          ],
+          [
+            465,
+            463
+          ],
+          [
+            465,
+            465
+          ],
+          [
+            465,
+            465
+          ],
+          [
+            465,
+            465
+          ]
+        ],
+        "result_scores": [
+          465,
+          465,
+          465,
+          465,
+          465,
+          465
+        ],
+        "gains_over_better_parent": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "selection_seconds": 0.045000000041909516,
+        "cycle_seconds": 0.5500000000465661
+      }
+    },
+    "regions-fixed": {
+      "score": 466,
+      "calls": 62,
+      "elapsed_seconds": 15.0,
+      "region_seconds": 15.0,
+      "policy_state": null
+    },
+    "regions-adaptive": {
+      "score": 466,
+      "calls": 36,
+      "elapsed_seconds": 15.030999999959022,
+      "region_seconds": 15.030999999959022,
+      "policy_state": {
+        "schema": "eternity-adaptive-regions/v1",
+        "max_seconds": 1.0,
+        "share": 0.2,
+        "attempts": [
+          9,
+          9,
+          9,
+          9
+        ],
+        "seconds": [
+          0.9390000000130385,
+          2.14000000001397,
+          3.7489999999525025,
+          8.202999999979511
+        ],
+        "gains": [
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    }
+  },
+  "portfolio": [
+    {
+      "seed": 17,
+      "mode": "baseline",
+      "flags": {
+        "reuse_structure": false,
+        "neutral_ties": false,
+        "pair_selection": false,
+        "adaptive_regions": false
+      },
+      "score": 466,
+      "neighborhoods": 670,
+      "recombinations": 41,
+      "elapsed_seconds": 30.29700000002049,
+      "region_calls": 5,
+      "region_improvements": 0,
+      "region_seconds": 1.2349999999860302,
+      "warmup_seconds": 3.0,
+      "cost_backend": "cuda",
+      "neighborhood_ratio_to_same_seed_baseline": 1.0
+    },
+    {
+      "seed": 17,
+      "mode": "reuse-only",
+      "flags": {
+        "reuse_structure": true,
+        "neutral_ties": false,
+        "pair_selection": false,
+        "adaptive_regions": false
+      },
+      "score": 466,
+      "neighborhoods": 2414,
+      "recombinations": 151,
+      "elapsed_seconds": 30.0,
+      "region_calls": 18,
+      "region_improvements": 0,
+      "region_seconds": 4.250999999931082,
+      "warmup_seconds": 2.8280000000959262,
+      "cost_backend": "cuda",
+      "neighborhood_ratio_to_same_seed_baseline": 3.6029850746268655
+    },
+    {
+      "seed": 17,
+      "mode": "ties",
+      "flags": {
+        "reuse_structure": false,
+        "neutral_ties": true,
+        "pair_selection": false,
+        "adaptive_regions": false
+      },
+      "score": 466,
+      "neighborhoods": 430,
+      "recombinations": 26,
+      "elapsed_seconds": 30.45299999997951,
+      "region_calls": 3,
+      "region_improvements": 0,
+      "region_seconds": 0.8279999999795109,
+      "warmup_seconds": 3.64000000001397,
+      "cost_backend": "cuda",
+      "neighborhood_ratio_to_same_seed_baseline": 0.6417910447761194
+    },
+    {
+      "seed": 17,
+      "mode": "pairing",
+      "flags": {
+        "reuse_structure": false,
+        "neutral_ties": false,
+        "pair_selection": true,
+        "adaptive_regions": false
+      },
+      "score": 466,
+      "neighborhoods": 670,
+      "recombinations": 42,
+      "elapsed_seconds": 30.015999999945052,
+      "region_calls": 5,
+      "region_improvements": 0,
+      "region_seconds": 1.0780000002123415,
+      "warmup_seconds": 3.0790000000270084,
+      "cost_backend": "cuda",
+      "neighborhood_ratio_to_same_seed_baseline": 1.0
+    },
+    {
+      "seed": 17,
+      "mode": "adaptive",
+      "flags": {
+        "reuse_structure": false,
+        "neutral_ties": false,
+        "pair_selection": false,
+        "adaptive_regions": true
+      },
+      "score": 466,
+      "neighborhoods": 702,
+      "recombinations": 43,
+      "elapsed_seconds": 30.53200000000652,
+      "region_calls": 5,
+      "region_improvements": 0,
+      "region_seconds": 2.0160000000614673,
+      "warmup_seconds": 2.640999999945052,
+      "cost_backend": "cuda",
+      "neighborhood_ratio_to_same_seed_baseline": 1.0477611940298508
+    },
+    {
+      "seed": 17,
+      "mode": "combined",
+      "flags": {
+        "reuse_structure": true,
+        "neutral_ties": true,
+        "pair_selection": true,
+        "adaptive_regions": true
+      },
+      "score": 466,
+      "neighborhoods": 1727,
+      "recombinations": 108,
+      "elapsed_seconds": 30.01500000001397,
+      "region_calls": 13,
+      "region_improvements": 0,
+      "region_seconds": 5.4219999997876585,
+      "warmup_seconds": 2.797000000020489,
+      "cost_backend": "cuda",
+      "neighborhood_ratio_to_same_seed_baseline": 2.5776119402985076
+    },
+    {
+      "seed": 41,
+      "mode": "combined",
+      "flags": {
+        "reuse_structure": true,
+        "neutral_ties": true,
+        "pair_selection": true,
+        "adaptive_regions": true
+      },
+      "score": 466,
+      "neighborhoods": 1771,
+      "recombinations": 110,
+      "elapsed_seconds": 30.0,
+      "region_calls": 13,
+      "region_improvements": 0,
+      "region_seconds": 5.328000000095926,
+      "warmup_seconds": 2.7969999999040738,
+      "cost_backend": "cuda",
+      "neighborhood_ratio_to_same_seed_baseline": 2.3613333333333335
+    },
+    {
+      "seed": 41,
+      "mode": "adaptive",
+      "flags": {
+        "reuse_structure": false,
+        "neutral_ties": false,
+        "pair_selection": false,
+        "adaptive_regions": true
+      },
+      "score": 466,
+      "neighborhoods": 718,
+      "recombinations": 44,
+      "elapsed_seconds": 30.311999999918044,
+      "region_calls": 5,
+      "region_improvements": 0,
+      "region_seconds": 2.062999999965541,
+      "warmup_seconds": 2.609000000054948,
+      "cost_backend": "cuda",
+      "neighborhood_ratio_to_same_seed_baseline": 0.9573333333333334
+    },
+    {
+      "seed": 41,
+      "mode": "pairing",
+      "flags": {
+        "reuse_structure": false,
+        "neutral_ties": false,
+        "pair_selection": true,
+        "adaptive_regions": false
+      },
+      "score": 466,
+      "neighborhoods": 590,
+      "recombinations": 37,
+      "elapsed_seconds": 30.04700000002049,
+      "region_calls": 4,
+      "region_improvements": 0,
+      "region_seconds": 1.0019999999785796,
+      "warmup_seconds": 2.8119999999180436,
+      "cost_backend": "cuda",
+      "neighborhood_ratio_to_same_seed_baseline": 0.7866666666666666
+    },
+    {
+      "seed": 41,
+      "mode": "ties",
+      "flags": {
+        "reuse_structure": false,
+        "neutral_ties": true,
+        "pair_selection": false,
+        "adaptive_regions": false
+      },
+      "score": 466,
+      "neighborhoods": 622,
+      "recombinations": 39,
+      "elapsed_seconds": 30.030999999959022,
+      "region_calls": 4,
+      "region_improvements": 0,
+      "region_seconds": 0.8900000000139698,
+      "warmup_seconds": 3.10999999998603,
+      "cost_backend": "cuda",
+      "neighborhood_ratio_to_same_seed_baseline": 0.8293333333333334
+    },
+    {
+      "seed": 41,
+      "mode": "reuse-only",
+      "flags": {
+        "reuse_structure": true,
+        "neutral_ties": false,
+        "pair_selection": false,
+        "adaptive_regions": false
+      },
+      "score": 466,
+      "neighborhoods": 2430,
+      "recombinations": 152,
+      "elapsed_seconds": 30.0,
+      "region_calls": 19,
+      "region_improvements": 0,
+      "region_seconds": 4.047999999718741,
+      "warmup_seconds": 2.719000000040978,
+      "cost_backend": "cuda",
+      "neighborhood_ratio_to_same_seed_baseline": 3.24
+    },
+    {
+      "seed": 41,
+      "mode": "baseline",
+      "flags": {
+        "reuse_structure": false,
+        "neutral_ties": false,
+        "pair_selection": false,
+        "adaptive_regions": false
+      },
+      "score": 466,
+      "neighborhoods": 750,
+      "recombinations": 47,
+      "elapsed_seconds": 30.0,
+      "region_calls": 5,
+      "region_improvements": 0,
+      "region_seconds": 1.3140000000130385,
+      "warmup_seconds": 2.672000000020489,
+      "cost_backend": "cuda",
+      "neighborhood_ratio_to_same_seed_baseline": 1.0
+    }
+  ],
+  "opencl": {
+    "ties": {
+      "all_matrices_equal": true,
+      "all_primary_optima_equal": true,
+      "all_repairs_valid": true,
+      "distinct_equal_score_results_per_neighborhood": [
+        1,
+        1
+      ],
+      "records": [
+        {
+          "tie_seed": null,
+          "cpu_matrix_seconds": 0.1720000000204891,
+          "device_matrix_seconds": 0.375,
+          "scores": [
+            466,
+            465
+          ],
+          "result_sha256": [
+            "944e1740af590f97e75e0914857df99391439128e949653a28bdb5b10f0af882",
+            "797c7c5d35f2f2146bae4f9e9a1291190354a7acc81b420111c7749c9cbfed77"
+          ]
+        },
+        {
+          "tie_seed": 17,
+          "cpu_matrix_seconds": 0.2339999999385327,
+          "device_matrix_seconds": 0.01600000006146729,
+          "scores": [
+            466,
+            465
+          ],
+          "result_sha256": [
+            "944e1740af590f97e75e0914857df99391439128e949653a28bdb5b10f0af882",
+            "797c7c5d35f2f2146bae4f9e9a1291190354a7acc81b420111c7749c9cbfed77"
+          ]
+        },
+        {
+          "tie_seed": 130,
+          "cpu_matrix_seconds": 0.25,
+          "device_matrix_seconds": 0.0,
+          "scores": [
+            466,
+            465
+          ],
+          "result_sha256": [
+            "944e1740af590f97e75e0914857df99391439128e949653a28bdb5b10f0af882",
+            "797c7c5d35f2f2146bae4f9e9a1291190354a7acc81b420111c7749c9cbfed77"
+          ]
+        },
+        {
+          "tie_seed": 924,
+          "cpu_matrix_seconds": 0.23400000005494803,
+          "device_matrix_seconds": 0.0,
+          "scores": [
+            466,
+            465
+          ],
+          "result_sha256": [
+            "944e1740af590f97e75e0914857df99391439128e949653a28bdb5b10f0af882",
+            "797c7c5d35f2f2146bae4f9e9a1291190354a7acc81b420111c7749c9cbfed77"
+          ]
+        }
+      ],
+      "device_stats": {
+        "cost_backend": "opencl",
+        "cost_device": "NVIDIA GeForce RTX 2060",
+        "cost_batches": 4,
+        "cost_pairs": 126004,
+        "cost_kernel_seconds": 9.0784e-05,
+        "cost_fallback_reason": null,
+        "cost_diagnostic_cpu": false
+      }
+    }
+  },
+  "separate_regressions": {
+    "path": "docs/evidence/release-regressions-20261020.json",
+    "passed": true,
+    "source_files_with_equal_before_after_hashes": 81,
+    "commands": [
+      {
+        "argv": [
+          "C:\\Users\\there\\AppData\\Local\\Temp\\EternityIIPublishBuild\\Scripts\\python.exe",
+          "-B",
+          "-X",
+          "utf8",
+          "-m",
+          "unittest",
+          "test_validator",
+          "test_library_cache",
+          "test_library_download",
+          "test_library_dashboard",
+          "test_archive_import",
+          "test_lifecycle",
+          "test_gpu_backends",
+          "test_boinc_worker",
+          "test_boinc_cpu_workunit",
+          "test_manual_export",
+          "test_exact_cp",
+          "test_exact_sat",
+          "test_exact_dfs",
+          "test_exact_integration",
+          "test_exact_worker",
+          "test_exact_pruning",
+          "test_hybrid_worker",
+          "test_hybrid_sampling",
+          "test_dfs_improvements",
+          "test_exact_rules",
+          "test_exact_optimize",
+          "test_smart_repair",
+          "test_smart_integration",
+          "test_exact_parallel",
+          "test_mismatch_bounds",
+          "test_exact_sat_session",
+          "test_exact_sat_optimize",
+          "test_dfs_adaptive",
+          "test_parallel_splitting",
+          "test_gpu_assignment",
+          "test_binary_pairwise",
+          "test_dfs_supported",
+          "test_parallel_cache",
+          "test_repair_diversify",
+          "test_repair_parents",
+          "test_repair_regions",
+          "test_repair_ties",
+          "test_repair_policy",
+          "test_repair_checkpoint",
+          "test_repair_continuation",
+          "-q"
+        ],
+        "exit_code": 0,
+        "seconds": 47.68799999996554
+      },
+      {
+        "argv": [
+          "C:\\Users\\there\\AppData\\Local\\Temp\\EternityIIPublishBuild\\Scripts\\python.exe",
+          "-B",
+          "-X",
+          "utf8",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "boinc",
+          "-p",
+          "test_*.py",
+          "-q"
+        ],
+        "exit_code": 0,
+        "seconds": 0.23400000005494803
+      },
+      {
+        "argv": [
+          "C:\\Users\\there\\AppData\\Local\\Temp\\EternityIIPublishBuild\\Scripts\\python.exe",
+          "-B",
+          "-X",
+          "utf8",
+          "launcher.py",
+          "diagnose-exact",
+          "--seconds",
+          "5"
+        ],
+        "exit_code": 0,
+        "seconds": 1.672000000020489
+      }
+    ],
+    "benchmark_source_differences": {
+      "smart_repair.py": {
+        "benchmark": "6cc0c0f5d836a532e00771813739a71a14df725781bda296fe37722a022d974d",
+        "regression": "827ff99e366eed5b3762718d39a650b5c3732213c3bf52dcac46d9eb23052c5a"
+      }
+    },
+    "scope": "Separate finite functional regression suite. Source hashes are the observations in that run; this audit does not rerun tests."
+  },
+  "decisions": {
+    "reuse_structure": {
+      "default": true,
+      "reason": "Identical finite validity outcomes and lower validation cost; portfolio neighborhood counts are reported separately."
+    },
+    "neutral_ties": {
+      "default": false,
+      "reason": "Correct equal-primary objectives, but no distinct results on these elite neighborhoods and no demonstrated score gain; experimental API only."
+    },
+    "pair_selection": {
+      "default": false,
+      "reason": "More permutation-cycle choices, but selected lower-scoring parents and no demonstrated score gain; experimental API only."
+    },
+    "adaptive_regions": {
+      "default": false,
+      "reason": "Exploration and bounded allocations function, but both region runs retained 466; search benefit inconclusive; experimental API only."
+    },
+    "checkpoint_resume": {
+      "default": true,
+      "reason": "Separate finite continuation and rejection regression tests; no speed-to-solution claim from these benchmarks.",
+      "separate_test_report": "docs/evidence/release-regressions-20261020.json",
+      "separate_test_log": null
+    }
+  },
+  "original_experiments": [
+    {
+      "report": "repair-candidates-20261020.json",
+      "started_at": "2026-10-20T16:08:57.384833+00:00",
+      "finished_at": "2026-10-20T16:09:43.905509+00:00",
+      "elapsed_seconds": 47.90700000000652,
+      "limits": {
+        "per_case_solver_seconds": 15.0,
+        "external_child_seconds": 75,
+        "cooperative_child_seconds": 70,
+        "soft_host_memory_mib": 2048,
+        "cupy_memory_bytes": 2147483648,
+        "cpu_workers": 1,
+        "gpu_batch": 16
+      },
+      "seeds": [
+        17
+      ],
+      "backend": "cuda"
+    },
+    {
+      "report": "repair-candidate-portfolios-20261020.json",
+      "started_at": "2026-10-20T16:12:08.943683+00:00",
+      "finished_at": "2026-10-20T16:19:00.853508+00:00",
+      "elapsed_seconds": 413.21899999992456,
+      "limits": {
+        "per_case_solver_seconds": 30.0,
+        "external_child_seconds": 75,
+        "cooperative_child_seconds": 70,
+        "soft_host_memory_mib": 2048,
+        "cupy_memory_bytes": 2147483648,
+        "cpu_workers": 1,
+        "gpu_batch": 16
+      },
+      "seeds": [
+        17,
+        41
+      ],
+      "backend": "cuda"
+    },
+    {
+      "report": "repair-candidates-opencl-20261020.json",
+      "started_at": "2026-10-20T16:19:10.925219+00:00",
+      "finished_at": "2026-10-20T16:19:18.188367+00:00",
+      "elapsed_seconds": 8.546999999904074,
+      "limits": {
+        "per_case_solver_seconds": 15.0,
+        "external_child_seconds": 75,
+        "cooperative_child_seconds": 70,
+        "soft_host_memory_mib": 2048,
+        "cupy_memory_bytes": 2147483648,
+        "cpu_workers": 1,
+        "gpu_batch": 16
+      },
+      "seeds": [
+        17
+      ],
+      "backend": "opencl"
+    }
+  ],
+  "residual_risks": [
+    "Finite local experiments do not establish time to reach 467 or 480, nor impossibility of this puzzle.",
+    "A separate approximately 0.81-second CPU diagnostic briefly overlapped portfolio seed 17 near the pairing/adaptive boundary; exact overlap is not recorded. Treat small timing differences as inconclusive.",
+    "Only two portfolio seeds and one parent bank were measured; parent-cycle counts and neighborhood throughput are proxies, not solution-quality improvements.",
+    "Wall-clock budgets and the 2048 MiB host cap were cooperative, not OS process memory or CPU-affinity limits. Each child also had an external 75-second timeout.",
+    "Socket auditing rejected Python connection attempts; it is not an operating-system firewall or proof about arbitrary native-library networking.",
+    "Archive-source snapshots identify measured bytes. They can differ from subsequent release defaults or packaging edits, which are not rerun by this audit.",
+    "The structured-repair baseline disables the new candidate flags, while retaining existing portfolio operators; it is not an execution of the previous released binary.",
+    "This audit pins existing primary evidence, rather than retroactively claiming its packaging command originally ran those experiments."
+  ],
+  "network_attempts": []
+}

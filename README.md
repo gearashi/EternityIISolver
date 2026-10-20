@@ -12,7 +12,7 @@ The [bounded sampler tests](docs/EXACT_SEARCH.md#measured-gpu-sampling-9-october
 
 BOINC-compatible worker development and the GPU DFS port remain **on hold**. Standalone CPU exact search does not execute assigned production tickets or submit results. The read-only workunit inspector remains available for examining saved inputs.
 
-**Library behavior retained from v0.2.2:** v0.2.2 replaces v0.2.1's optional background library downloads with a manual **Download and merge** button. Opening the app never starts a library download, and old automatic-download settings are ignored. Existing caches and search state are retained. Version 0.3.1 adds the experimental search methods described below; no better puzzle solution is claimed.
+**Library behavior retained from v0.2.2:** v0.2.2 replaces v0.2.1's optional background library downloads with a manual **Download and merge** button. Opening the app never starts a library download, and old automatic-download settings are ignored. Existing caches and search state are retained. Version 0.4.0 adds resumable structured repair and the experimental search methods described below; no better puzzle solution is claimed.
 
 ## Download and start
 
@@ -29,7 +29,7 @@ Open `EternityIISolver.exe` on Windows, `EternityIISolver.app` on macOS, or `Ete
 
 DFS, SAT, and hybrid use one CPU worker. CP-SAT allows **1–4** workers. GPU repair retains its backend selector and **32–32,768** parallel searches (default **4096**); those are GPU replicas, not CPU workers. Hybrid exposes the same numeric control as **GPU sample batch** for its short sampling stage. More replicas, larger batches, or more workers are not guaranteed to be faster. Stop the active search before changing settings.
 
-**Stop & save** requests a clean search stop and saves local state. It preserves the best board and exports; DFS and GPU repair also save resumable search state. Hybrid reuses its frozen hints and separate DFS frontier on resume. SAT/CP-SAT native search state is not checkpointed. The dashboard stays available afterward. **Download and merge** is a separate, manual library operation with its own cancellation control. Closing the browser leaves the search and any requested archive operation running while the local dashboard server stays open.
+**Stop & save** requests a clean search stop and saves local state. It preserves the best board and exports; DFS, GPU repair, and the two structured matching engines also save resumable search state. Hybrid reuses its frozen hints and separate DFS frontier on resume. SAT/CP-SAT native search state is not checkpointed. The dashboard stays available afterward. **Download and merge** is a separate, manual library operation with its own cancellation control. Closing the browser leaves the search and any requested archive operation running while the local dashboard server stays open.
 
 Native archives include Python and application dependencies, but hardware drivers remain system supplied. Linux builds target the Ubuntu 22.04 runtime baseline and use the host system's `libstdc++` and `libgcc`, so newer GPU drivers load their matching C++ runtime. OpenCL support is conditional on the driver exposing a suitable GPU; normal search does not silently fall back to CPU OpenCL. AMD/Intel users should select **OpenCL** explicitly. Apple has [deprecated OpenCL](https://developer.apple.com/opencl/); macOS builds therefore depend on the runtime still exposed by the target Mac. The macOS archives are not Apple-notarized. They are built natively on macOS 15 Intel and macOS 14 ARM runners; older macOS versions are not certified.
 
@@ -82,7 +82,7 @@ python -m pip install ".[cuda]"
 eternity-solver open
 ```
 
-A GitHub release wheel can also be installed with `python -m pip install path/to/eternity_ii_solver-0.3.1-py3-none-any.whl` when that release is available. The core dependencies include OR-Tools 9.15 and python-sat; no separate exact-search extra is required. Install the CUDA extra from the source checkout if desired. Search and manual export work offline. Requested library-archive downloads, release/dependency downloads, and opening external documentation require internet access. The repository is not claimed to be published on PyPI.
+A GitHub release wheel can also be installed with `python -m pip install path/to/eternity_ii_solver-0.4.0-py3-none-any.whl` when that release is available. The core dependencies include OR-Tools 9.15 and python-sat; no separate exact-search extra is required. Install the CUDA extra from the source checkout if desired. Search and manual export work offline. Requested library-archive downloads, release/dependency downloads, and opening external documentation require internet access. The repository is not claimed to be published on PyPI.
 
 PyOpenCL and a hardware-vendor OpenCL implementation are separate requirements. A successful Python installation alone does not supply an AMD/Intel/NVIDIA GPU driver. See [PyOpenCL installation](https://documen.tician.de/pyopencl/misc.html#installation) and [CuPy installation](https://docs.cupy.dev/en/stable/install.html) for supported runtime configurations.
 
@@ -96,7 +96,7 @@ Application resources are read-only. Runtime state is stored separately:
 | macOS | `~/Library/Application Support/EternityIISolver` |
 | Linux | `$XDG_DATA_HOME/eternity-ii-solver`, or `~/.local/share/eternity-ii-solver` |
 
-Use a command's `--state-dir PATH` option or the `ETERNITY_SOLVER_HOME` environment variable to choose another directory. Keep the state directory if you want to retain checkpoints and the board cache across upgrades. Dashboard/worker logs, current status, checkpoints, the library cache, and verified results live there; they are not written into the app bundle. GPU populations, ordinary DFS frontiers, and hybrid hints/frontiers use separate saved state and are validated before resuming. SAT/CP-SAT retain run status and the saved best board but rebuild their native search on each start.
+Use a command's `--state-dir PATH` option or the `ETERNITY_SOLVER_HOME` environment variable to choose another directory. Keep the state directory if you want to retain checkpoints and the board cache across upgrades. Dashboard/worker logs, current status, checkpoints, the library cache, and verified results live there; they are not written into the app bundle. GPU populations, ordinary DFS frontiers, hybrid hints/frontiers, and structured matching populations use separate saved state and are validated before resuming. Structured matching saves working parents, random state, recent history, and completed neighborhoods. Interrupted batches may be repeated from the last complete boundary; saved improvements remain protected. Changed matching settings require an explicit restart, which archives the previous checkpoint. SAT/CP-SAT retain run status and the saved best board but rebuild their native search on each start.
 
 Click **Download and merge** to request the [full public library archive](https://stats.eternityathome.org/library/archive). Each click starts one archive download; there are no startup downloads, scheduled refreshes, automatic retries, or per-board requests. Old automatic-download settings are ignored. Bundled and previously cached arrangements remain available without a download, including archives imported before this upgrade.
 
@@ -114,7 +114,7 @@ A project message supplied by the user reports that the project's tested GPU DFS
 
 ## Experimental search improvements
 
-The 0.3.2.dev1 local preview adds diverse cached parents, plateau escapes and connected-region score repair to the structured matching engines. These additions activate automatically in **Advanced search → GPU costs + CPU matching** (or its CPU matching counterpart). See [details and bounded evidence](docs/SMART_SEARCH.md).
+Version 0.4.0 includes the previously previewed diverse cached parents, plateau escapes and connected-region score repair for the structured matching engines. These additions activate automatically in **Advanced search → GPU costs + CPU matching** (or its CPU matching counterpart). See [details and bounded evidence](docs/SMART_SEARCH.md).
 
 Version 0.3.1 adds selectable strong/adaptive DFS pruning, dynamic parallel DFS partitions, incremental SAT and CP-SAT score optimization, conflict-core hitting-set repair, GPU-batched matching costs and exact cycle board repair. GPU matching uses a separate neighborhood batch control; the CPU performs exact assignments and validation. See [smart-search methods and evidence](docs/SMART_SEARCH.md). These are measured experiments, not a claim of a 480 solution or a universal speedup. The ordinary GPU solver remains available. All workers run offline; only manual archive downloads contact the library.
 

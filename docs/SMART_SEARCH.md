@@ -66,7 +66,7 @@ app to resume. Explicitly choosing a fresh search archives the old checkpoint;
 changing profiles cannot silently reuse a different frontier. Parallel queue schema is
 version2; version1 queues are preserved for the matching older app. Adaptive pre-node
 state and split ownership are validated during replay. Native SAT/CP-SAT
-and the repair portfolio restart search using the saved best board.
+and native score optimizers restart search using the saved best board. Structured matching now resumes its population, random state, recent-board history and bounded completed-neighborhood history from a compatible checkpoint. A partial batch replays from the previous complete boundary while retaining any independently validated improvement. Changing continuation settings requires an explicit restart, which archives the old file.
 
 ## Correctness and evidence
 
@@ -82,7 +82,7 @@ wall time and independently checked results. A timeout proves neither success
 nor impossibility. Regional infeasibility only describes the frozen region.
 Fewer explored branches alone does not establish a speed improvement.
 
-## Structured repair additions (0.3.2.dev1 local preview)
+## Structured repair additions (0.4.0)
 
 The **GPU costs + CPU matching** and **Matching + cycle repair** engines now
 include all three additions below automatically. GPU costs still use CUDA or
@@ -195,3 +195,20 @@ The program distinguishes implemented algorithms, finite correctness evidence, m
 performance and untested candidates. An open-ended improvement loop cannot certify
 that no possible optimization remains. It preserves all board/STOP files and never
 turns a bounded negative result into a full-puzzle impossibility claim.
+
+
+## Candidate decisions in 0.4.0
+
+Repeated board acceptance reuses a detached immutable puzzle snapshot. Every board
+still receives full structural and score checks. Structured matching also resumes
+its working population and random state after Stop instead of rebuilding from the
+best board alone. An incomplete batch is replayed from the last complete boundary;
+any independently verified best is retained. Checkpoint settings and contents are
+validated before use, and an explicit restart archives incompatible state.
+
+Three other tested Python API options remain disabled: `neutral_ties` explores
+seeded alternatives with the same primary matching score, `pair_selection` ranks
+sampled parent pairs by cycle structure, and `adaptive_regions` learns from verified
+regional score gains per elapsed second. They preserve all puzzle constraints, but
+bounded real-board comparisons did not establish a score improvement. See the
+[experiment decisions and raw evidence](SEARCH_RESEARCH.md#five-repair-candidates-20-october-2026-040).

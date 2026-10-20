@@ -276,5 +276,118 @@ class SmartIntegrationTests(unittest.TestCase):
         self.assertFalse(rendered['freshSettings']['hidden'])
 
 
+    def repair_checkpoint_solver(self, capture):
+        from repair_checkpoint import CheckpointCodec, neighborhood_key
+        from smart_repair import checkpoint_settings
+        from test_repair_checkpoint import initial_state
+        def fake(problem, reference, seed, checkpoint=None, on_checkpoint=None, **kwargs):
+            options = checkpoint_settings(seed=seed, gpu_backend=kwargs.get('gpu_backend'),
+                                          gpu_batch_size=kwargs.get('gpu_batch_size', 16))
+            codec = CheckpointCodec(problem, options)
+            state = codec.decode(checkpoint) if checkpoint is not None else initial_state(problem, reference, seed)
+            capture.append((checkpoint is not None, list(reference), state['completed']))
+            state['completed'] += 1; state['rounds'] += 1; state['batches'] += 1
+            state['elapsed_total'] += 0.1
+            key = neighborhood_key(reference, [0], state['completed'])
+            state['seen'].append(key)
+            payload = codec.encode(state)
+            on_checkpoint(payload)
+            return {'outcome':'timeout', 'board':state['best'], 'score':state['best_score'],
+                    'checkpoint':payload, 'parent_count':len(state['bank'])}
+        return fake
+
+    def test_matching_resume_retains_population_and_skips_library_scan(self):
+        for engine in ('matching', 'gpu-matching'):
+            captured = []
+            fake = self.repair_checkpoint_solver(captured)
+            with patch('smart_repair.cached_parents', return_value=[]) as parents:
+                self.assertEqual(self.run_fake(engine, fake), 0)
+                self.assertEqual(parents.call_count, 1)
+            path = self.runtime / f'exact-{engine}-checkpoint.json'
+            saved = json.loads(path.read_text())
+            self.assertEqual(saved['state']['completed'], 1)
+            with patch('smart_repair.cached_parents', side_effect=AssertionError('Resume reread library')):
+                self.assertEqual(self.run_fake(engine, fake), 0)
+            self.assertEqual(captured[-1][0], True)
+            self.assertEqual(captured[-1][2], 1)
+            self.assertEqual(json.loads(path.read_text())['state']['completed'], 2)
+            self.assertTrue(self.read()['resumed'])
+            self.assertTrue(self.read('exact-session.json')['repair_search_state_resumed'])
+            self.assertFalse(self.read('exact-session.json')['native_search_state_resumed'])
+            self.assertEqual(self.read()['best_score'], 466)
+
+    def test_matching_incompatible_checkpoint_preserved_until_explicit_restart(self):
+        captured = []; fake = self.repair_checkpoint_solver(captured)
+        with patch('smart_repair.cached_parents', return_value=[]):
+            self.assertEqual(self.run_fake('matching', fake), 0)
+        path = self.runtime / 'exact-matching-checkpoint.json'
+        original = path.read_bytes()
+        self.assertEqual(self.run_fake('matching', fake, seed=19), 1)
+        self.assertEqual(path.read_bytes(), original)
+        self.assertIn('--fresh-exact', self.read()['error'])
+        with patch('smart_repair.cached_parents', return_value=[]):
+            self.assertEqual(self.run_fake('matching', fake, seed=19, fresh_exact=True), 0)
+        backups = list(self.runtime.glob('exact-matching-checkpoint.archived-*.json'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), original)
+        self.assertFalse(captured[-1][0])
+        self.assertEqual(json.loads(path.read_text())['settings']['seed'], 19)
+
+    def test_matching_corruption_and_invalid_callback_cannot_replace_saved_state(self):
+        captured = []; fake = self.repair_checkpoint_solver(captured)
+        with patch('smart_repair.cached_parents', return_value=[]):
+            self.assertEqual(self.run_fake('matching', fake), 0)
+        path = self.runtime / 'exact-matching-checkpoint.json'
+        original = path.read_bytes(); best = (self.runtime / 'best.json').read_bytes()
+        def bad(checkpoint=None, on_checkpoint=None, **kwargs):
+            checkpoint['state']['best_score'] = 480
+            on_checkpoint(checkpoint)
+            self.fail('Invalid checkpoint callback was accepted')
+        self.assertEqual(self.run_fake('matching', bad), 1)
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual((self.runtime / 'best.json').read_bytes(), best)
+        path.write_text('{"broken":')
+        self.assertEqual(self.run_fake('matching', fake), 1)
+        self.assertEqual(path.read_text(), '{"broken":')
+        self.assertEqual((self.runtime / 'best.json').read_bytes(), best)
+        self.assertIn('--fresh-exact', self.read()['error'])
+
+    def test_matching_checkpoint_cannot_lower_existing_saved_best(self):
+        from exact_model import from_bundle
+        from repair_checkpoint import CheckpointCodec
+        from repair_diversify import Diversifier
+        from smart_repair import checkpoint_settings
+        from test_repair_checkpoint import initial_state
+        problem = from_bundle(self.bundle)
+        lower = Diversifier(problem).perturb(self.bundle.record_board, seed=17, moves=2)['board']
+        checked = validate_board(lower, self.bundle)
+        self.assertTrue(checked['valid']); self.assertLess(checked['score'], 466)
+        codec = CheckpointCodec(problem, checkpoint_settings(seed=exact_worker.DEFAULT_SEED))
+        payload = codec.encode(initial_state(problem, lower, exact_worker.DEFAULT_SEED))
+        path = self.runtime / 'exact-matching-checkpoint.json'
+        path.write_text(json.dumps(payload))
+        def fake(reference, checkpoint=None, **kwargs):
+            self.assertEqual(validate_board(reference, self.bundle)['score'], 466)
+            state = codec.decode(checkpoint)
+            return {'outcome':'timeout', 'board':state['best'], 'score':state['best_score']}
+        self.assertEqual(self.run_fake('matching', fake), 0)
+        self.assertEqual(self.read()['best_score'], 466)
+        self.assertEqual(self.read('best.json')['score'], 466)
+
+    def test_matching_ui_exposes_resume_and_explicit_restart(self):
+        helper = library_tests.LibraryDashboardTests('test_boot_shows_cache_without_starting_archive_or_search')
+        helper.server = SimpleNamespace(resources=Path(exact_worker.__file__).parent)
+        for engine in ('matching', 'gpu-matching'):
+            rendered = helper.render_status(dict(state='stopped', method='exact', can_start=True,
+                          exact_engine=engine, settings={'method':'exact', 'exact_engine':engine}))
+            self.assertFalse(rendered['freshSettings']['hidden'])
+            self.assertEqual(rendered['freshLabel']['text'], 'Restart repair population')
+            self.assertIn('resumes compatible working boards', rendered['resumeHint']['text'])
+        rendered = helper.render_status(dict(state='stopped', method='exact', can_start=True,
+                      exact_engine='cp-sat', settings={'method':'exact', 'exact_engine':'cp-sat'}))
+        self.assertTrue(rendered['freshSettings']['hidden'])
+
+
+
 if __name__ == '__main__':
     unittest.main()

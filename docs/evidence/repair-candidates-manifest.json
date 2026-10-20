@@ -1,0 +1,182 @@
+{
+  "schema_version": 2,
+  "claim_id": "EII-REPAIR-CANDIDATE-EVIDENCE-AUDIT-20261020",
+  "repository": {
+    "commit": "debc7172fad7df94555cfe543ad4085ef50629ed",
+    "dirty": true
+  },
+  "command": [
+    "C:\\Users\\there\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+    "-B",
+    "-X",
+    "utf8",
+    "C:\\EternityIISolver\\research\\assemble_repair_candidate_evidence.py",
+    "--repo",
+    "C:\\EternityIISolver\\source",
+    "--direct",
+    "C:\\EternityIISolver\\research\\repair-candidates-20261020.json",
+    "--portfolio",
+    "C:\\EternityIISolver\\research\\repair-candidate-portfolios-20261020.json",
+    "--opencl",
+    "C:\\EternityIISolver\\research\\repair-candidates-opencl-20261020.json",
+    "--parents",
+    "C:\\EternityIISolver\\source\\docs\\evidence\\repair-candidates-20261020.parents.json",
+    "--regressions",
+    "C:\\EternityIISolver\\source\\docs\\evidence\\release-regressions-20261020.json"
+  ],
+  "environment": {
+    "software": [
+      {
+        "name": "Python",
+        "version": "3.12.14"
+      },
+      {
+        "name": "platform",
+        "version": "Windows-10-10.0.19044-SP0"
+      }
+    ],
+    "hardware": "AMD64; Intel64 Family 6 Model 60 Stepping 3, GenuineIntel"
+  },
+  "mathematics": {
+    "assertion_tested": "Preserved reports have unchanged benchmark input/source/protected hashes, archived measured source bytes, matching public parent fixtures, and independently legal complete boards with their stated scores; compact metrics are derived from the raw observations.",
+    "coefficient_domain": "Exact integers for states, edge colors and score; measured floating-point wall-clock durations.",
+    "conventions": "16x16 row-major board; state=4*(piece ID-1)+clockwise rotation; outside edges gray; all five oriented clues fixed; 480 adjacency edges. Manifest run describes the evidence audit, while original benchmark commands and timings remain in input reports.",
+    "inputs": [
+      "docs/evidence/repair-candidates-20261020.json",
+      "docs/evidence/repair-candidate-portfolios-20261020.json",
+      "docs/evidence/repair-candidates-opencl-20261020.json",
+      "docs/evidence/repair-candidates-20261020.parents.json",
+      "docs/evidence/repair-candidates-20261020.sources.zip",
+      "docs/evidence/repair-candidates-audit-20261020.py",
+      "docs/evidence/release-regressions-20261020.json"
+    ],
+    "bounds": {
+      "source_files": 22,
+      "frozen_parents": 32,
+      "direct_cases": 5,
+      "portfolio_cases": 12,
+      "opencl_cases": 1,
+      "original_experiment_limits": [
+        {
+          "per_case_solver_seconds": 15.0,
+          "external_child_seconds": 75,
+          "cooperative_child_seconds": 70,
+          "soft_host_memory_mib": 2048,
+          "cupy_memory_bytes": 2147483648,
+          "cpu_workers": 1,
+          "gpu_batch": 16
+        },
+        {
+          "per_case_solver_seconds": 30.0,
+          "external_child_seconds": 75,
+          "cooperative_child_seconds": 70,
+          "soft_host_memory_mib": 2048,
+          "cupy_memory_bytes": 2147483648,
+          "cpu_workers": 1,
+          "gpu_batch": 16
+        },
+        {
+          "per_case_solver_seconds": 15.0,
+          "external_child_seconds": 75,
+          "cooperative_child_seconds": 70,
+          "soft_host_memory_mib": 2048,
+          "cupy_memory_bytes": 2147483648,
+          "cpu_workers": 1,
+          "gpu_batch": 16
+        }
+      ]
+    },
+    "non_claims": [
+      "Finite local experiments do not establish time to reach 467 or 480, nor impossibility of this puzzle.",
+      "A separate approximately 0.81-second CPU diagnostic briefly overlapped portfolio seed 17 near the pairing/adaptive boundary; exact overlap is not recorded. Treat small timing differences as inconclusive.",
+      "Only two portfolio seeds and one parent bank were measured; parent-cycle counts and neighborhood throughput are proxies, not solution-quality improvements.",
+      "Wall-clock budgets and the 2048 MiB host cap were cooperative, not OS process memory or CPU-affinity limits. Each child also had an external 75-second timeout.",
+      "Socket auditing rejected Python connection attempts; it is not an operating-system firewall or proof about arbitrary native-library networking.",
+      "Archive-source snapshots identify measured bytes. They can differ from subsequent release defaults or packaging edits, which are not rerun by this audit.",
+      "The structured-repair baseline disables the new candidate flags, while retaining existing portfolio operators; it is not an execution of the previous released binary.",
+      "This audit pins existing primary evidence, rather than retroactively claiming its packaging command originally ran those experiments."
+    ]
+  },
+  "randomness": {
+    "used": false,
+    "generator": "No random draws in the audit; original experiment seeds are preserved in reports.",
+    "seed": null
+  },
+  "run": {
+    "started_at": "2026-10-20T16:23:30.607196+00:00",
+    "runtime_seconds": 0.28100000007543713,
+    "exit_status": 0,
+    "status": "completed",
+    "resource_limits": {
+      "memory_bytes": null,
+      "cpu_seconds": null,
+      "max_cores": null,
+      "max_threads": null
+    }
+  },
+  "outputs": [
+    {
+      "path": "docs/evidence/repair-candidates-audit-20261020.json",
+      "sha256": "32e3ed679e203b599e4235a583ea32b6e260825380c801a26c9e639f73aa14d4",
+      "kind": "result"
+    }
+  ],
+  "checks": [
+    "Raw before/after source, fixture and protected-file hashes agree for every case.",
+    "All measured source bytes match archived ZIP members.",
+    "All shared parent boards and embedded result boards were checked from archived piece definitions.",
+    "All child processes report successful completion with no recorded Python networking or resource interruption.",
+    "Audit input bytes were hashed before and after its checks; no original benchmark report was modified."
+  ],
+  "result": "Preserved finite evidence passed integrity and board-validity checks. Reuse is supported; three optional search heuristics lack demonstrated solution-quality benefit. Resume correctness is covered by separate regression tests.",
+  "residual_risks": [
+    "Finite local experiments do not establish time to reach 467 or 480, nor impossibility of this puzzle.",
+    "A separate approximately 0.81-second CPU diagnostic briefly overlapped portfolio seed 17 near the pairing/adaptive boundary; exact overlap is not recorded. Treat small timing differences as inconclusive.",
+    "Only two portfolio seeds and one parent bank were measured; parent-cycle counts and neighborhood throughput are proxies, not solution-quality improvements.",
+    "Wall-clock budgets and the 2048 MiB host cap were cooperative, not OS process memory or CPU-affinity limits. Each child also had an external 75-second timeout.",
+    "Socket auditing rejected Python connection attempts; it is not an operating-system firewall or proof about arbitrary native-library networking.",
+    "Archive-source snapshots identify measured bytes. They can differ from subsequent release defaults or packaging edits, which are not rerun by this audit.",
+    "The structured-repair baseline disables the new candidate flags, while retaining existing portfolio operators; it is not an execution of the previous released binary.",
+    "This audit pins existing primary evidence, rather than retroactively claiming its packaging command originally ran those experiments."
+  ],
+  "input_artifacts": [
+    {
+      "path": "docs/evidence/repair-candidates-20261020.json",
+      "sha256": "09aadddfd5af9c14816e4b99b754a28a5f15603bc08dd85fb44b1e2807b646f1",
+      "sha256_after": "09aadddfd5af9c14816e4b99b754a28a5f15603bc08dd85fb44b1e2807b646f1"
+    },
+    {
+      "path": "docs/evidence/repair-candidate-portfolios-20261020.json",
+      "sha256": "6a6df55e0c8cc23d76b9f973d552642423323dcd21a0e5f786ee32e412badfb4",
+      "sha256_after": "6a6df55e0c8cc23d76b9f973d552642423323dcd21a0e5f786ee32e412badfb4"
+    },
+    {
+      "path": "docs/evidence/repair-candidates-opencl-20261020.json",
+      "sha256": "a4148a1d8196279bc0c709c7b67a4a57fdafaaab6fc5a855198e7dfb1dc66f02",
+      "sha256_after": "a4148a1d8196279bc0c709c7b67a4a57fdafaaab6fc5a855198e7dfb1dc66f02"
+    },
+    {
+      "path": "docs/evidence/repair-candidates-20261020.parents.json",
+      "sha256": "149777d8689648536202050181b4e3d78c21cf637c520e4c74886ab754545833",
+      "sha256_after": "149777d8689648536202050181b4e3d78c21cf637c520e4c74886ab754545833"
+    },
+    {
+      "path": "docs/evidence/repair-candidates-20261020.sources.zip",
+      "sha256": "0c81e396346627e6d1aa62cdfd56d604f57247e2f7bae90857e7bdc5e201ee94",
+      "sha256_after": "0c81e396346627e6d1aa62cdfd56d604f57247e2f7bae90857e7bdc5e201ee94"
+    },
+    {
+      "path": "docs/evidence/repair-candidates-audit-20261020.py",
+      "sha256": "60a3e7dfc38040f5ac3b1e7337eba8a45d8443027ba07652e491324cfc572d90",
+      "sha256_after": "60a3e7dfc38040f5ac3b1e7337eba8a45d8443027ba07652e491324cfc572d90"
+    },
+    {
+      "path": "docs/evidence/release-regressions-20261020.json",
+      "sha256": "92721efe31d1b9ff50368d25652a3a7ab1047175936e6b00f3795c79a8c82358",
+      "sha256_after": "92721efe31d1b9ff50368d25652a3a7ab1047175936e6b00f3795c79a8c82358"
+    }
+  ],
+  "declared_results": [
+    "docs/evidence/repair-candidates-audit-20261020.json"
+  ]
+}

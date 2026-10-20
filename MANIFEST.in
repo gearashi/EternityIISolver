@@ -24,3 +24,5 @@ prune results
 prune build
 prune dist
 global-exclude *.pyc *.pyo *.npz *.sqlite *.db *.log .DS_Store
+
+include docs/evidence/repair-candidates-audit-20261020.py

@@ -13,7 +13,7 @@ import webbrowser
 from app_paths import resource_root, state_root
 from process_control import read_status
 
-VERSION = '0.3.2.dev1'
+VERSION = '0.4.0'
 
 
 class _NoLocalRedirect(urllib.request.HTTPRedirectHandler):
@@ -44,7 +44,7 @@ def parser():
             command.add_argument('--workers', type=int, default=1, help='CPU workers (1; CP-SAT, optimization and partitioned DFS support up to 4)')
             command.add_argument('--gpu-repair-batch', type=int, default=16, help='GPU matching neighborhoods per batch1..64')
             command.add_argument('--pruning', choices=('baseline', 'strong', 'full', 'adaptive'), default='baseline')
-            command.add_argument('--fresh-exact', action='store_true', help='Archive the previous DFS frontier and explicitly restart')
+            command.add_argument('--fresh-exact', action='store_true', help='Archive the selected DFS/structured-repair checkpoint and explicitly restart')
             command.add_argument('--backend', choices=('auto', 'cuda', 'opencl'), default='auto')
             command.add_argument('--replicas', type=int, default=4096)
             command.add_argument('--seed', type=int, default=20261007)

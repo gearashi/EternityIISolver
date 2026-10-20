@@ -252,5 +252,63 @@ parent selection; it is not a parent-selection-only timing.
 [computation manifest](evidence/repair-portfolio-manifest.json) preserve these
 results and their limits. Desktop contention and short runs prevent a reliable
 speed ranking. The tests establish bounded correctness and operator activation,
-not faster time to 480 or global infeasibility. This is a local Windows preview;
-the published 0.3.1 release remains available for rollback.
+not faster time to 480 or global infeasibility. That experiment was a local Windows preview; its changes are included in 0.4.0,
+and the 0.3.1 release remains available for rollback.
+
+
+## Five repair candidates: 20 October 2026 (0.4.0)
+
+The release keeps two changes enabled: immutable structural-validation reuse and
+structured repair checkpoint/resume. Equal-score random tie handling, cycle-aware
+parent selection and adaptive regional budgets remain disabled Python API
+experiments (`neutral_ties`, `pair_selection`, `adaptive_regions` in
+`smart_repair.solve`). Correctness alone does not establish search effectiveness.
+
+The direct validation test used 16 valid and 16 deliberately invalid actual boards,
+three alternating passes per mode. Median times were 0.703 seconds rebuilding the
+structural problem and 0.016 seconds reusing it. This approximately 44-fold result
+applies only to the validation microbenchmark, not the whole solver. All tested
+legality outcomes agreed.
+
+Seeded ties preserved the exact primary matching objective and CPU/device cost
+agreement but produced no additional boards in the two elite neighborhoods tested.
+Cycle-aware selection increased mean active components from 11 to 13 in six sampled
+pair comparisons, but its returned boards scored 465 while elite-parent comparisons
+retained 466. More components do not establish better search. Fixed and adaptive
+regional schedules both retained 466 during their 15-second operator comparisons.
+The adaptive schedule exercised all four profiles but showed no measured score gain.
+
+Full-portfolio ablations use one fixed, independently validated 32-parent fixture,
+six configurations, 30-second search budgets and two seeds with reversed order.
+GPU/native warm-up is reported separately. Every accepted improvement and final
+board is independently validated. These are short desktop trials: one tiny CPU
+diagnostic overlapped part of the first-seed trials for about 0.8 seconds. The raw
+reports preserve the actual timing, source hashes and interruption status.
+
+Six finite continuation tests cover an uninterrupted eight-batch run versus a
+three-plus-five resumed run, interrupted-batch replay, best preservation, callback
+isolation, settings changes and the 64-parent limit. Matching checkpoints preserve
+the complete working population and random state at a completed batch boundary.
+They do not claim exhaustive puzzle coverage or serialize native SAT/CP-SAT state.
+
+Evidence: [direct comparisons](evidence/repair-candidates-20261020.json),
+[portfolio ablations](evidence/repair-candidate-portfolios-20261020.json),
+[OpenCL agreement](evidence/repair-candidates-opencl-20261020.json),
+[exact measured sources](evidence/repair-candidates-20261020.sources.zip),
+[public parent fixture](evidence/repair-candidates-20261020.parents.json),
+[evidence audit](evidence/repair-candidates-audit-20261020.json) and
+[v2 computation manifest](evidence/repair-candidates-manifest.json).
+The manifest audits the preserved experiment evidence; the raw reports retain the
+original experiment commands and before/after measurements.
+
+
+With validation reuse alone, the two 30-second portfolio trials completed 2,414
+and 2,430 neighborhoods versus 670 and 750 for their baselines (3.60x and 3.24x
+counts). Their scores remained 466. This isolates that optimization; it does not
+include periodic checkpoint writes or measure the released app's time to solve.
+The [release regression report](evidence/release-regressions-20261020.json)
+records 470 application tests, seven result-validator tests and 16 tiny solver
+diagnostics, all passing. An initial continuation-test failure was corrected by
+explicitly enabling the nondefault feature in its fixture; production behavior
+was unchanged. A separate isolated real CUDA-worker smoke run saved 47 completed
+batches, resumed to 104 batches, and retained the independently verified 466 best.

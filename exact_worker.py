@@ -191,6 +191,8 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
     next_poll = 0.0
     background_error = None
     result = None
+    repair_codec = None
+    repair_checkpoint_path = None
     bundle = None
     best = None
     status = {'state': 'starting', 'pid': os.getpid(), 'method': 'exact',
@@ -389,18 +391,51 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                 status['resume_capability'] = 'saved best board only; starts a fresh repair search'
                 if engine in ('matching', 'gpu-matching'):
                     from smart_repair import cached_parents
-                    try:
-                        preparation_budget = 5.0 if seconds is None else max(0.0, min(5.0, seconds - (time.monotonic() - started)))
-                        solve_args['parents'] = cached_parents(problem, home / 'library' / 'library.sqlite3', limit=32,
-                                                             seed=seed, should_stop=should_stop, max_seconds=preparation_budget)
-                    except (OSError, ValueError, sqlite3.Error) as exc:
-                        solve_args['parents'] = []
-                        status['cached_parents_warning'] = f'Local parent cache unavailable: {type(exc).__name__}'
-                    status['cached_parent_count'] = len(solve_args['parents'])
                     if engine == 'gpu-matching':
                         solve_args.update(gpu_backend=backend, gpu_batch_size=gpu_repair_batch,
                                           gpu_cache_dir=runtime / 'gpu-cache', gpu_allow_cpu_fallback=False)
                         status['compute_device'] = 'GPU placement costs + CPU exact assignment'
+                    if 'checkpoint' in inspect.signature(solver).parameters:
+                        from repair_checkpoint import CheckpointCodec, load_checkpoint
+                        from smart_repair import checkpoint_settings
+                        keys = inspect.signature(checkpoint_settings).parameters
+                        repair_codec = CheckpointCodec(problem, checkpoint_settings(**{
+                            key: value for key, value in solve_args.items() if key in keys}))
+                        repair_checkpoint_path = runtime / f'exact-{engine}-checkpoint.json'
+                        status['resume_capability'] = 'structured repair population, random state, policy and completed neighborhoods'
+                        def on_repair_checkpoint(checkpoint):
+                            # Validate an independent detached copy before atomic replacement.
+                            decoded = repair_codec.decode(checkpoint)
+                            if decoded['best_score'] > status['best_score']:
+                                on_improvement({'board': decoded['best'], 'score': decoded['best_score']})
+                            with guard:
+                                _atomic_json(repair_checkpoint_path, checkpoint)
+                                status['checkpoint_saved_at'] = _now()
+                        solve_args['on_checkpoint'] = on_repair_checkpoint
+                        if fresh_exact and repair_checkpoint_path.exists():
+                            repair_checkpoint_path.replace(repair_checkpoint_path.with_name(
+                                f'{repair_checkpoint_path.stem}.archived-{time.time_ns()}.json'))
+                            status['previous_checkpoint_archived'] = True
+                        if repair_checkpoint_path.exists():
+                            try:
+                                checkpoint = load_checkpoint(repair_checkpoint_path)
+                                decoded = repair_codec.decode(checkpoint)
+                            except (OSError, ValueError, TypeError, AttributeError) as exc:
+                                raise ValueError('Repair checkpoint is incompatible or unreadable; use --fresh-exact to archive it and restart') from exc
+                            solve_args['checkpoint'] = checkpoint
+                            status['resumed'] = True
+                            status['cached_parent_count'] = len(decoded['bank'])
+                            on_improvement({'board': decoded['best'], 'score': decoded['best_score']})
+                            solve_args['reference'] = list(best)
+                    if not status['resumed']:
+                        try:
+                            preparation_budget = 5.0 if seconds is None else max(0.0, min(5.0, seconds - (time.monotonic() - started)))
+                            solve_args['parents'] = cached_parents(problem, home / 'library' / 'library.sqlite3', limit=32,
+                                                                 seed=seed, should_stop=should_stop, max_seconds=preparation_budget)
+                        except (OSError, ValueError, sqlite3.Error) as exc:
+                            solve_args['parents'] = []
+                            status['cached_parents_warning'] = f'Local parent cache unavailable: {type(exc).__name__}'
+                        status['cached_parent_count'] = len(solve_args['parents'])
             checkpoint_path = runtime / ('exact-hybrid-dfs-checkpoint.json' if engine == 'hybrid' else 'exact-dfs-checkpoint.json')
             hint_solution = None
             if engine == 'hybrid':
@@ -472,14 +507,16 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             try:
                 result = {'outcome':'solved','board':hint_solution} if hint_solution is not None else solver(**solve_args)
             except ValueError as exc:
-                if engine in ('dfs', 'hybrid', 'partitioned') and status['resumed']:
-                    raise ValueError(f'DFS checkpoint could not be resumed; use --fresh-exact to archive it and restart: {exc}') from exc
+                if engine in ('dfs', 'hybrid', 'partitioned', 'matching', 'gpu-matching') and status['resumed']:
+                    raise ValueError(f'Saved search could not be resumed; use --fresh-exact to archive it and restart: {exc}') from exc
                 raise
             heartbeat_done.set()
             heartbeat.join()
             if engine in ('dfs', 'hybrid') and result.get('checkpoint') is not None:
                 _atomic_json(checkpoint_path, result['checkpoint'])
                 status['checkpoint_saved_at'] = _now()
+            if repair_codec is not None and result.get('checkpoint') is not None:
+                on_repair_checkpoint(result['checkpoint'])
         next_poll = 0.0
         should_stop()  # Recheck a late STOP or memory limit before any negative conclusion.
         if background_error is not None:
@@ -522,6 +559,10 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                           exact_conclusion='Repair target search ended. Saved improvements remain available; this is not a proof that the complete puzzle is impossible')
         else:
             status.update(state='stopped', exact_phase='stopped')
+        if repair_checkpoint_path is not None and status['state'] == 'solved' and repair_checkpoint_path.exists():
+            repair_checkpoint_path.replace(repair_checkpoint_path.with_name(
+                f'{repair_checkpoint_path.stem}.completed-{time.time_ns()}.json'))
+            status['completed_checkpoint_archived'] = True
         if engine in ('dfs', 'hybrid') and status['state'] in ('solved', 'infeasible', 'checkpoint_frontier_exhausted'):
             checkpoint_path = runtime / ('exact-hybrid-dfs-checkpoint.json' if engine == 'hybrid' else 'exact-dfs-checkpoint.json')
             if checkpoint_path.exists():
@@ -547,7 +588,8 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             save_status()
             session.update(finished_at=_now(), outcome=status.get('exact_outcome'), status=dict(status),
                            elapsed_seconds=time.monotonic() - started,
-                           native_search_state_resumed=False if engine not in ('dfs', 'hybrid', 'partitioned') else status['resumed'])
+                           native_search_state_resumed=False if engine not in ('dfs', 'hybrid', 'partitioned') else status['resumed'],
+                           repair_search_state_resumed=engine in ('matching', 'gpu-matching') and status['resumed'])
             if isinstance(result, dict):
                 session['result'] = {key: value for key, value in result.items() if key not in ('board', 'checkpoint')}
             _atomic_json(runtime / 'exact-session.json', session)
@@ -570,7 +612,7 @@ def main(argv=None, solver_factory=None):
     parser.add_argument('--gpu-repair-batch', type=int, default=16, help='GPU matching neighborhoods per batch (1..64)')
     parser.add_argument('--pruning', choices=PRUNING_PROFILES, default='baseline', help='DFS pruning profile; changing profile requires a compatible checkpoint or --fresh-exact')
     parser.add_argument('--preserve-stop', action='store_true')
-    parser.add_argument('--fresh-exact', action='store_true', help='Archive the existing DFS checkpoint and start from the full puzzle')
+    parser.add_argument('--fresh-exact', action='store_true', help='Archive the selected DFS/structured-repair checkpoint and start a fresh search')
     parser.add_argument('--port', type=int, default=8765, help='Dashboard metadata only; no server is started')
     args = parser.parse_args(argv)
     try:

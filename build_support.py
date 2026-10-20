@@ -26,6 +26,15 @@ def resource_files(root):
         yield relative, source
 
 DISTRIBUTION_DOCUMENTS = (
+    "docs/evidence/repair-candidates-audit-20261020.py",
+    "docs/evidence/release-regressions-20261020.json",
+    'docs/evidence/repair-candidates-20261020.json',
+    'docs/evidence/repair-candidate-portfolios-20261020.json',
+    'docs/evidence/repair-candidates-opencl-20261020.json',
+    'docs/evidence/repair-candidates-20261020.parents.json',
+    'docs/evidence/repair-candidates-20261020.sources.zip',
+    'docs/evidence/repair-candidates-audit-20261020.json',
+    'docs/evidence/repair-candidates-manifest.json',
     "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "DATA_PROVENANCE.md",
     "docs/BOINC.md", "docs/BOINC_CPU.md", "docs/EXACT_SEARCH.md", "docs/SMART_SEARCH.md", "boinc/job.xml", "boinc/workunit.sample.json",
     "boinc/input_template.xml", "boinc/output_template.xml",

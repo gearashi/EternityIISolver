@@ -46,7 +46,11 @@ jobs:
         if: matrix.flavor == 'cuda-opencl'
         run: python -m pip install -r requirements-cuda.txt
       - name: CPU rule, lifecycle, library, backend, and BOINC tests
-        run: python -m unittest test_validator test_library_cache test_library_download test_library_dashboard test_archive_import test_lifecycle test_gpu_backends test_boinc_worker test_boinc_cpu_workunit test_manual_export test_exact_cp test_exact_sat test_exact_dfs test_exact_integration test_exact_worker test_exact_pruning test_hybrid_worker test_hybrid_sampling test_dfs_improvements test_exact_rules test_exact_optimize test_smart_repair test_smart_integration test_exact_parallel test_mismatch_bounds test_exact_sat_session test_exact_sat_optimize test_dfs_adaptive test_parallel_splitting test_gpu_assignment test_binary_pairwise test_dfs_supported test_parallel_cache test_repair_diversify test_repair_parents test_repair_regions -v
+        run: python -m unittest test_validator test_library_cache test_library_download test_library_dashboard test_archive_import test_lifecycle test_gpu_backends test_boinc_worker test_boinc_cpu_workunit test_manual_export test_exact_cp test_exact_sat test_exact_dfs test_exact_integration test_exact_worker test_exact_pruning test_hybrid_worker test_hybrid_sampling test_dfs_improvements test_exact_rules test_exact_optimize test_smart_repair test_smart_integration test_exact_parallel test_mismatch_bounds test_exact_sat_session test_exact_sat_optimize test_dfs_adaptive test_parallel_splitting test_gpu_assignment test_binary_pairwise test_dfs_supported test_parallel_cache test_repair_diversify test_repair_parents test_repair_regions test_repair_ties test_repair_policy test_repair_checkpoint test_repair_continuation -v
+      - name: Seeded and baseline CPU assignment diagnostics
+        run: |
+          python -c "import json; from gpu_assignment import diagnose; print(json.dumps(diagnose(backend='cpu',size=6,count=8),indent=2))"
+          python -c "import json; from gpu_assignment import diagnose; print(json.dumps(diagnose(backend='cpu',size=6,count=8,tie_seed=17),indent=2))"
       - name: Independent BOINC result validation tests
         run: python -m unittest discover -s boinc -p "test_*.py" -v
       - name: Build native archive and smoke-test frozen commands
@@ -86,6 +90,8 @@ jobs:
         run: python launcher.py diagnose-hybrid --backend opencl --allow-opencl-cpu --replicas 32 --seconds 0.1 --output build/hybrid-pocl.json
       - name: Source assignment-kernel correctness on PoCL (CPU diagnostic only)
         run: python launcher.py diagnose-assignment --backend opencl --allow-opencl-cpu --size 6 --count 8 --seconds 90 --output build/assignment-pocl.json
+      - name: Source seeded assignment-kernel correctness on PoCL (CPU diagnostic only)
+        run: python launcher.py diagnose-assignment --backend opencl --allow-opencl-cpu --size 6 --count 8 --tie-seed 17 --seconds 90 --output build/assignment-pocl-seeded.json
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: release-linux-x64
@@ -113,6 +119,8 @@ jobs:
         run: ./frozen/EternityIISolver/EternityIISolver diagnose-hybrid --backend opencl --allow-opencl-cpu --replicas 32 --seconds 0.1 --output build/frozen-hybrid-pocl.json
       - name: Frozen assignment-kernel correctness on PoCL (CPU diagnostic only)
         run: ./frozen/EternityIISolver/EternityIISolver diagnose-assignment --backend opencl --allow-opencl-cpu --size 6 --count 8 --seconds 90 --output build/frozen-assignment-pocl.json
+      - name: Frozen seeded assignment-kernel correctness on PoCL (CPU diagnostic only)
+        run: ./frozen/EternityIISolver/EternityIISolver diagnose-assignment --backend opencl --allow-opencl-cpu --size 6 --count 8 --tie-seed 17 --seconds 90 --output build/frozen-assignment-pocl-seeded.json
       - name: Upload diagnostic evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -127,6 +135,8 @@ jobs:
             build/frozen-hybrid-pocl.json
             build/assignment-pocl.json
             build/frozen-assignment-pocl.json
+            build/assignment-pocl-seeded.json
+            build/frozen-assignment-pocl-seeded.json
           if-no-files-found: warn
 
   python-package:
@@ -147,6 +157,7 @@ jobs:
           python scripts/check_wheel.py dist/*.whl
           python -m venv "$RUNNER_TEMP/wheel-smoke"
           "$RUNNER_TEMP/wheel-smoke/bin/python" -m pip install --no-deps dist/*.whl
+          "$RUNNER_TEMP/wheel-smoke/bin/python" -I -c "import smart_repair; from repair_policy import PairSelector; from repair_checkpoint import CheckpointCodec; print('Installed wheel repair-module imports passed')"
           "$RUNNER_TEMP/wheel-smoke/bin/python" -I -c "from validator import load_bundle,validate_board; b=load_bundle(); r=validate_board(b.record_board,b); assert r['valid'] and r['score']==466; print('Installed wheel resource validation passed')"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
