@@ -28,12 +28,35 @@ from validator import load_bundle, validate_board
 
 
 MEMORY_SOFT_LIMIT_MB = 2048.0
+# The 256-cell domains alone exceed the small-instance engine defaults.
+FULL_BOARD_REGION_WORK = 10_000_000
 UNBOUNDED_SECONDS = 1.0e12  # Finite native API horizon, approximately 31,688 years.
 SCOPE = 'full-16x16-five-clue-puzzle-all-480-edges'
-ENGINES = ('dfs', 'sat', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching')
+ENGINES = ('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs')
 REPAIR_ENGINES = ('optimize', 'core-repair', 'matching', 'sat-optimize', 'gpu-matching')
-PRUNING_PROFILES = ('baseline', 'strong', 'full', 'adaptive')
+PRUNING_PROFILES = ('baseline', 'strong', 'full', 'adaptive', 'components', 'joint', 'relational')
 DEFAULT_SEED = 20261007
+
+
+def dfs_profile_options(profile):
+    """Return a fresh option set shared by packaged DFS and offline replays."""
+    if profile not in PRUNING_PROFILES:
+        raise ValueError('Unknown DFS pruning profile')
+    if profile == 'baseline':
+        return {}
+    if profile == 'components':
+        return {'component_completion': True}
+    if profile == 'joint':
+        return {'extra_rules': {'joint_colors': True}}
+    if profile == 'relational':
+        return {'extra_rules': {'relational': True}}
+    options = dict(gac=True, independent_completion=True, dual_branch=True,
+                   edge_branch=True, extra_rules=None)
+    if profile in ('full', 'adaptive'):
+        options.update(probe=True, extra_rules={})
+    if profile == 'adaptive':
+        options['adaptive'] = True
+    return options
 
 
 def _now():
@@ -65,7 +88,17 @@ def _read_json(path, limit):
 def _backend(engine):
     if engine in ('dfs', 'hybrid'):
         from exact_dfs import solve
-    elif engine == 'sat':
+    elif engine == 'impact-dfs':
+        from impact_dfs import solve
+    elif engine == 'learning-rules':
+        from explained_rules import solve
+    elif engine == 'learning-dfs':
+        from explained_dfs import solve
+    elif engine == 'regional-master':
+        from regional_master import solve
+    elif engine == 'refined-dd':
+        from refined_diagrams import solve
+    elif engine in ('sat', 'sat-channels'):
         from exact_sat import solve
     elif engine == 'optimize':
         from exact_optimize import optimize as solve
@@ -82,7 +115,8 @@ def _backend(engine):
     return solve
 
 
-def _settings(engine, seconds, seed, workers, port, backend='auto', replicas=4096, pruning='baseline', gpu_repair_batch=16):
+def _settings(engine, seconds, seed, workers, port, backend='auto', replicas=4096, pruning='baseline', gpu_repair_batch=16, repair_quality='baseline'):
+    if repair_quality not in ('baseline','guided','guided-lift','bounded','learned','partition-bounds','price-bounds'): raise ValueError('Invalid repair quality policy')
     if engine not in ENGINES:
         raise ValueError('Unknown exact engine')
     if seconds is not None and (type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0):
@@ -100,7 +134,7 @@ def _settings(engine, seconds, seed, workers, port, backend='auto', replicas=409
     if backend not in ('auto', 'cuda', 'opencl') or type(replicas) is not int or not 32 <= replicas <= 32768:
         raise ValueError('Hybrid requires a valid GPU backend and batch size32..32768')
     return {'backend': backend, 'replicas': replicas, 'engine': engine, 'seconds': seconds, 'seed': seed, 'workers': workers,
-            'port': port, 'memory_soft_limit_mb': MEMORY_SOFT_LIMIT_MB, 'scope': SCOPE, 'pruning': pruning, 'gpu_repair_batch': gpu_repair_batch}
+            'port': port, 'memory_soft_limit_mb': MEMORY_SOFT_LIMIT_MB, 'scope': SCOPE, 'pruning': pruning, 'gpu_repair_batch': gpu_repair_batch, 'repair_quality': repair_quality}
 
 
 def _known_cached_board(home, board, digest):
@@ -164,14 +198,14 @@ def _load_or_sample_hints(path, bundle, fingerprint, seed, backend, replicas, se
 
 
 def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, workers=1,
-             preserve_stop=False, port=8765, fresh_exact=False, backend='auto', replicas=4096, pruning='baseline', gpu_repair_batch=16, solver_factory=None, sampler_factory=None):
+             preserve_stop=False, port=8765, fresh_exact=False, backend='auto', replicas=4096, pruning='baseline', gpu_repair_batch=16, repair_quality='baseline', solver_factory=None, sampler_factory=None):
     """Run one exact search, returning an exit code; injected factories are for tests.
 
     A solver factory receives the engine name and returns its solve callable.
     Native SAT/CP search state is not resumed. DFS checkpoints are used only
     when the selected implementation exposes its explicit checkpoint API.
     """
-    settings = _settings(engine, seconds, seed, workers, port, backend, replicas, pruning, gpu_repair_batch)
+    settings = _settings(engine, seconds, seed, workers, port, backend, replicas, pruning, gpu_repair_batch, repair_quality)
     settings['fresh_exact'] = bool(fresh_exact)
     home = state_root(state_dir)
     runtime = home / 'runtime'
@@ -202,7 +236,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
               'last_update': _now(), 'elapsed_seconds': 0.0, 'best_score': None,
               'source_best_score': 466, 'branches': 0, 'conflicts': 0,
               'exact_counters_available': engine in ('dfs', 'hybrid', 'partitioned'),
-              'pruning': pruning, 'neighborhoods': 0, 'recombinations': 0,
+              'pruning': pruning, 'repair_quality': repair_quality, 'neighborhoods': 0, 'recombinations': 0,
               'diversification_attempts': 0, 'diversifications': 0, 'tabu_rejections': 0,
               'region_calls': 0, 'region_improvements': 0, 'region_seconds': 0.0, 'parent_count': 0,
               'exact_phase': 'starting', 'scope': SCOPE,
@@ -265,7 +299,13 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                         'matching_failures', 'build_seconds', 'variables', 'clauses', 'table_rows',
                         'neighborhoods', 'recombinations', 'rounds', 'free_cells', 'cores',
                         'diversification_attempts', 'diversifications', 'tabu_rejections', 'region_calls',
-                        'region_improvements', 'region_seconds', 'parent_count',
+                        'region_improvements', 'region_seconds', 'parent_count', 'region_cache_hits',
+                        'quality_ejection_calls', 'quality_recombination_calls', 'quality_candidate_evaluations',
+                        'quality_heuristic_state_evaluations', 'quality_path_expansions', 'quality_native_branches',
+                        'quality_native_conflicts', 'quality_table_rows', 'quality_accepted_piece_changes',
+                        'quality_returned_piece_changes', 'quality_returned_board_improvements', 'quality_adoptions',
+                        'quality_deterministic_work', 'quality_accepted_board_improvements',
+                        'quality_true_score_gain', 'quality_stopped_calls',
                         'tickets_total', 'tickets_completed', 'split_tickets', 'queue_records', 'cost_batches', 'cost_pairs',
                         'cost_kernel_seconds', 'cost_elapsed_seconds', 'target_score', 'hitting_set_seconds',
                         'gac_checks', 'gac_removed', 'independent_completions', 'probe_checks', 'probe_rejections'):
@@ -274,6 +314,11 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                     status[key] = value
                     if key == 'branches':
                         status['exact_counters_available'] = True
+            for key,value in progress.items():
+                if key.startswith('region_reasoning_') and type(value) in (int,float) and math.isfinite(value) and value>=0: status[key]=value
+            for key in ('component_counters_session','rule_counters_session','reasoning_counters_session'):
+                if isinstance(progress.get(key),dict):
+                    status[key]={k:v for k,v in progress[key].items() if isinstance(k,str) and type(v) in (int,float) and math.isfinite(v) and v>=0}
             for key in ('cost_backend', 'cost_device'):
                 if isinstance(progress.get(key), str):
                     status[key] = progress[key][:160]
@@ -371,13 +416,24 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                           'seed': seed, 'workers': workers, 'should_stop': should_stop,
                           'on_progress': on_progress}
             if engine in ('dfs', 'hybrid', 'partitioned'):
-                solve_args['options'] = {} if pruning == 'baseline' else {
-                    'gac': True, 'independent_completion': True, 'dual_branch': True,
-                    'edge_branch': True, 'extra_rules': None}
-                if pruning in ('full', 'adaptive'):
-                    solve_args['options'].update(probe=True, extra_rules={})
-                if pruning == 'adaptive':
-                    solve_args['options']['adaptive'] = True
+                solve_args['options'] = dfs_profile_options(pruning)
+            if engine in ('learning-dfs','learning-rules','regional-master','refined-dd','impact-dfs'):
+                status['resume_capability']='fresh search; no saved frontier for this experimental engine'
+            if engine == 'sat-channels':
+                solve_args.update(piece_channels=True, small_pairwise=True)
+            if engine in ('learning-dfs', 'learning-rules'):
+                # The full official root exceeds the small experimental API
+                # cap before either learning engine can try a placement.
+                solve_args['max_work'] = 100_000_000
+            if engine == 'learning-dfs':
+                solve_args['matching'] = True
+            if engine == 'regional-master':
+                solve_args.update(minimize_interfaces=True, allocation_cores=True,
+                                  color_conservation=True, color_coupling='edge_colors', hall_capacity=True,
+                                  cache_witnesses=True, max_work=FULL_BOARD_REGION_WORK)
+            if engine == 'refined-dd':
+                solve_args.update(ordering='domain', max_work=FULL_BOARD_REGION_WORK)
+            if engine == 'impact-dfs': solve_args.update(ordering='impact', discrepancy_limit=None)
             if engine == 'partitioned':
                 queue_path = runtime / 'exact-partitioned-queue.json'
                 if fresh_exact and queue_path.exists():
@@ -391,6 +447,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                 status['resume_capability'] = 'saved best board only; starts a fresh repair search'
                 if engine in ('matching', 'gpu-matching'):
                     from smart_repair import cached_parents
+                    if repair_quality != 'baseline': solve_args['repair_quality'] = repair_quality
                     if engine == 'gpu-matching':
                         solve_args.update(gpu_backend=backend, gpu_batch_size=gpu_repair_batch,
                                           gpu_cache_dir=runtime / 'gpu-cache', gpu_allow_cpu_fallback=False)
@@ -551,8 +608,10 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                 status.update(state='infeasible', exact_phase='complete', proof_scope='entire_supplied_problem',
                               exact_conclusion='The selected backend reports no solution for all 480 edges and the five fixed clues; no proof certificate was checked')
         elif outcome == 'timeout':
-            status.update(state='finished_bounded_run', exact_phase='timeout',
-                          exact_conclusion='Time budget ended; no feasibility conclusion')
+            limit=result.get('termination','timeout')
+            limit=limit if limit in ('work_limit','node_limit','refinement_limit','query_limit') else 'timeout'
+            status.update(state='finished_bounded_run', exact_phase=limit,search_termination=limit,
+                          exact_conclusion='Search limit reached; no feasibility conclusion')
         elif outcome in ('improved', 'infeasible_for_target', 'unchanged'):
             status.update(state='finished_bounded_run', exact_phase='finished', coverage_verified=False,
                           proof_scope=result.get('proof_scope', 'selected_repair_target'),
@@ -609,6 +668,7 @@ def main(argv=None, solver_factory=None):
     parser.add_argument('--workers', type=int, default=1)
     parser.add_argument('--backend', choices=('auto','cuda','opencl'), default='auto')
     parser.add_argument('--replicas', type=int, default=4096, help='Hybrid GPU sample batch32..32768')
+    parser.add_argument('--repair-quality', choices=('baseline','guided','guided-lift','bounded','learned','partition-bounds','price-bounds'), default='baseline', help='Optional guided repair uses experimental targeted chains and three-parent recombination')
     parser.add_argument('--gpu-repair-batch', type=int, default=16, help='GPU matching neighborhoods per batch (1..64)')
     parser.add_argument('--pruning', choices=PRUNING_PROFILES, default='baseline', help='DFS pruning profile; changing profile requires a compatible checkpoint or --fresh-exact')
     parser.add_argument('--preserve-stop', action='store_true')

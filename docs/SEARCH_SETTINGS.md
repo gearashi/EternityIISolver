@@ -1,0 +1,61 @@
+# Choosing a search for the five-clue puzzle
+
+The release includes a disposition for each of the 67 proposals. [Improvement decisions](IMPROVEMENTS.md)
+
+## Exact search for 480
+
+For a run that prioritizes fewer decisions, select **Advanced search → DFS → Maximum filtering (experimental) → 1 worker**. From a command prompt in a native build, use the following command.
+
+```text
+EternityIISolver start --method exact --exact-engine dfs --pruning full --workers 1
+```
+
+When switching from a saved DFS profile, select **Restart saved search** once so the app archives the old frontier. Starting again with the same profile and seed resumes its own compatible checkpoint.
+
+The DFS benchmark used the 256 official pieces, the five oriented clues, the Jef 466 reference and seed 20261007. A case freed a square 5×5, 7×7 or 9×9 corner. It required the originally matched edges in the declared scope so that a completion was known to exist. Each result passed a separate check of all physical pieces, fixed states, frame and selected edges.
+
+On the 23 easier regions that all five profiles completed within 1.5 seconds, Maximum filtering used 11 decisions in total, Adaptive used 30, and Baseline, Strong and Independent regions used 31 each. These totals count trial placements used for lookahead. The hardest case freed the bottom-right 9×9 and enforced originally matched internal edges. The first trial gave each profile two minutes. The continuations gave each unfinished profile up to 15 additional minutes from its saved frontier. A repeated placement or lookahead probe during resume counted again.
+
+| Hard 9×9 | Decisions to verified completion | Total elapsed |
+| --- | ---: | ---: |
+| Baseline | 20,327 | 58 s |
+| Strong | 90,051 | 13m 59s |
+| Maximum filtering | 6,941 | 8m 33s |
+| Adaptive | 14,164 | 5m 46s |
+| Independent regions | 20,347 | 5m 03s |
+
+Replay the same 133-edge region from source with `python scripts/replay_reference_region.py --profile full --seconds 1020`. A fresh uninterrupted replay avoids the checkpoint reconstruction charged to the continuation.
+
+On the hard task, each profile reconstructed the bundled 466 board cell for cell. An independent checker rebuilt the physical orientations from the raw tile file and verified all 133 selected edges. All five profiles eventually solved all 24 tasks. Summing placements across that fixed set gives 6,952 for Maximum filtering, 14,194 for Adaptive, 20,358 for Baseline, 20,378 for Independent regions and 90,082 for Strong. The hardest case accounts for most of each total.
+
+On this i7-4790, Baseline reached the hard regional witness first. Maximum filtering spent more work per branch and needed fewer placements. A full five-clue 480 run has a different search tree. The fastest full-board profile and its time to solution are unknown.
+
+**SAT with piece channels** uses the Glucose native solver with explicit piece-membership variables and pairwise clauses for small groups. On 24 held-out generated tasks it used 5,881 native decisions, compared with 6,358 for standard Glucose. It won on eight cases, lost on twelve and tied four. **Explained DFS with inventory rules** feeds justified color and regional deletions into conflict learning. **Regional master + conflict cores** shares the color of an interior edge between its two incident cells and caches checked local witnesses. On 49 completed small cases this coupling reduced local placements from 387 to 235 and native master branches from 1,434 to 1,041. These counters are specific to their engines.
+
+## Improving a saved board
+
+For restricted next-score repairs, choose **Advanced search → Matching + cycle repair → Regional assignment and price bounds (experimental) → 1 worker**. **GPU costs + CPU matching** runs placement-cost evaluation on a compatible GPU and executes the same regional proof on the CPU. CUDA and OpenCL were both exercised on an RTX 2060 with 6 GiB; testing the OpenCL path on that device does not establish performance on other vendors.
+
+On 24 completed original-piece regional targets, the combined assignment, compatibility and integer-verified price bounds lowered candidate placements from 239 to 75 compared with assignment and compatibility alone. Explicit work rose from 29,562 to 277,899 operations with 606 additional simplex iterations. The eight attempts to improve the intact 466 within their selected small regions were infeasible. Deliberately damaged copies supplied positive repair controls.
+
+**Guided rotation repair + witness reuse** expands supported rotations while retaining physical tile identity. Reuse of independently verified patches reduced native work on 12 repeated original-piece repair queries from 7,548 to 2,516 branches. Guided and baseline repair both stayed at 466 on the undamaged official comparison. The conventional GPU board repair and the hybrid sampling stage remain available. The new GPU construction trial improved the scores of random starts but saved zero downstream DFS decisions on the two measured original-piece tasks. A moves-per-second figure measures a different quantity from placements to a completed search.
+
+## What the local proofs establish
+
+The bundled 466 is Jef’s imported five-clue board. Every strict improvement from it requires at least nine changed cell states, including two orthogonal neighbors. A tile rotation counts as a changed state. Using moves that change at most two cells, the reachable component at scores 465 and higher has ten boards. Allowing score 464 expands the component to 285 boards and still produces no exit to 467. The score-463 component has 3,785 boards. Lowering the floor to 462 gives 65,875 reachable boards, still with no exit to 467. Such a path must reach 461 or lower.
+
+The radius solver now bounds each connected group of changed cells, including groups that lose matches. It discards combinations whose best possible total gain is zero or lower. On this board at radius seven, two exact methods agreed that no gain existed. The component accounting reduced the checked complete cell sets from **15,931,447 to 1,646,927**. At radius eight, it covered 60,271,297 possible combinations, evaluated 24,313,897 complete cell sets and found no gain.
+
+A perfect board requires **at least 24 changed cell states** from this 466. Ten overlapping regions have certified minimum change counts. Their integer-weighted sum is 376, and each cell can contribute at most 16. Rounding 376/16 up gives 24. A separate checker reconstructs clockwise tile orientations from the printed sides and checks the 5,961 smaller subsets directly. [Certificate for the public reference](record466-distance.json)
+
+```text
+python scripts/verify_distance_certificate.py
+EternityIISolver perfect-distance board.json
+EternityIISolver repair-radius board.json --radius 8 --seconds 900
+EternityIISolver repair-patches board.json first-patch.json second-patch.json
+EternityIISolver repair-parent-pair board.json other-board.json third-board.json
+```
+
+The native app includes the C++ helper for radii four through eight. For a Python installation, build it from the source distribution using `python scripts/build_radius_helper.py` with a C++17 compiler, then supply the executable path with `--helper`. Every radius result reports how far the proof completed. A deadline or work cap leaves the rest of that neighborhood open.
+
+All these commands work offline. The dashboard can fetch the public board archive after an explicit **Download and merge** request. **Export best** writes local files for manual review.

@@ -26,6 +26,7 @@ def resource_files(root):
         yield relative, source
 
 DISTRIBUTION_DOCUMENTS = (
+    "docs/SEARCH_SETTINGS.md", "docs/IMPROVEMENTS.md", "docs/record466-distance.json",
     "docs/evidence/repair-candidates-audit-20261020.py",
     "docs/evidence/release-regressions-20261020.json",
     'docs/evidence/repair-candidates-20261020.json',

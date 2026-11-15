@@ -31,9 +31,16 @@ def normalize_options(options=None):
     """Strict, deterministic settings; absence retains the original baseline."""
     if options is None:
         options = {}
-    if not isinstance(options, dict) or set(options) - set(DEFAULT_OPTIONS):
+    extensions = {'component_completion': False, 'component_work': 20000, 'component_max_cells': 24}
+    if not isinstance(options, dict) or set(options) - (set(DEFAULT_OPTIONS) | set(extensions)):
         raise ValueError('Unknown DFS options or invalid options object')
-    result = dict(DEFAULT_OPTIONS, **options)
+    extra = dict(extensions, **{k:v for k,v in options.items() if k in extensions})
+    if type(extra["component_completion"]) is not bool: raise ValueError("component_completion must be boolean")
+    if type(extra["component_work"]) is not int or not 0 <= extra["component_work"] <= 1000000: raise ValueError("Invalid component work cap")
+    if type(extra["component_max_cells"]) is not int or not 1 <= extra["component_max_cells"] <= 256: raise ValueError("Invalid component size cap")
+    result = dict(DEFAULT_OPTIONS, **{k:v for k,v in options.items() if k in DEFAULT_OPTIONS})
+    # Default fingerprints remain byte-for-byte compatible with existing DFS saves.
+    if extra["component_completion"]: result.update(extra)
     for key in ('gac', 'independent_completion', 'dual_branch', 'edge_branch', 'probe', 'adaptive'):
         if type(result[key]) is not bool:
             raise ValueError('DFS option %s must be boolean' % key)
@@ -206,6 +213,7 @@ class _Search:
                                  sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('ascii')
         self.options_hash = hashlib.sha256(raw_options).hexdigest()
         self.rules = None
+        self.component_stats = dict(calls=0, splits=0, completions=0, failures=0, work=0, candidate_placements=0)
         self.rng = random.Random(seed)
         self.seed = seed
         self.size = problem.size
@@ -249,6 +257,7 @@ class _Search:
             # Rule counters describe this invocation, including reconstruction
             # and speculative probes; only the explicit DFS counters resume.
             'rule_counters_session': {} if self.rules is None else dict(self.rules.counters),
+            'component_counters_session': dict(self.component_stats),
         }
 
     def check(self):
@@ -801,6 +810,30 @@ class _Search:
                     if board is not None:
                         self.committed_policy = _copy_policy(self.policy)
                         return board
+                if self.options.get('component_completion', False):
+                    from residual_components import solve_components
+                    component = solve_components(self.problem, current,
+                        max_work=self.options['component_work'], max_component_cells=self.options['component_max_cells'],
+                        should_stop=lambda: bool((self.should_stop and self.should_stop()) or time.perf_counter()>=self.deadline))
+                    self.component_stats['calls']+=1
+                    self.component_stats['splits']+=int(component['component_count']>1)
+                    self.component_stats['work']+=component['work']
+                    self.component_stats['candidate_placements']+=component['candidate_placements']
+                    # Local component branching is real search work, not hidden
+                    # behind one macro completion. Invocation detail is separate.
+                    self.branches+=component['candidate_placements']
+                    self.cell_branches+=component['candidate_placements']
+                    if component['outcome']=='solved':
+                        self.component_stats['completions']+=1
+                        if not check_solution(self.problem, component['board']): raise RuntimeError('Invalid component completion')
+                        self.committed_policy=_copy_policy(self.policy)
+                        return component['board']
+                    self.check()
+                    if component['outcome']=='infeasible':
+                        self.component_stats['failures']+=1;self.conflicts+=1
+                        self.committed_policy=_copy_policy(self.policy)
+                        self.stack.pop()
+                        continue
                 kind, cell, candidates = self.choose_partition(current)
                 self.committed_rng = self.rng.getstate()
                 self.committed_policy = _copy_policy(self.policy) if self.options['adaptive'] else self.policy

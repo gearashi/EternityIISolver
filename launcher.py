@@ -13,7 +13,7 @@ import webbrowser
 from app_paths import resource_root, state_root
 from process_control import read_status
 
-VERSION = '0.4.0'
+VERSION = '0.5.0'
 
 
 class _NoLocalRedirect(urllib.request.HTTPRedirectHandler):
@@ -40,10 +40,11 @@ def parser():
         command.add_argument('--state-dir', type=Path, help='Folder for checkpoints, cache, logs and results')
         if name in ('start', 'run'):
             command.add_argument('--method', choices=('gpu', 'exact'), default='gpu')
-            command.add_argument('--exact-engine', choices=('dfs', 'sat', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching'), default='dfs')
+            command.add_argument('--exact-engine', choices=('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs'), default='dfs')
             command.add_argument('--workers', type=int, default=1, help='CPU workers (1; CP-SAT, optimization and partitioned DFS support up to 4)')
             command.add_argument('--gpu-repair-batch', type=int, default=16, help='GPU matching neighborhoods per batch1..64')
-            command.add_argument('--pruning', choices=('baseline', 'strong', 'full', 'adaptive'), default='baseline')
+            command.add_argument('--repair-quality', choices=('baseline','guided','guided-lift','bounded','learned','partition-bounds','price-bounds'), default='baseline')
+            command.add_argument('--pruning', choices=('baseline', 'strong', 'full', 'adaptive', 'components', 'joint', 'relational'), default='baseline')
             command.add_argument('--fresh-exact', action='store_true', help='Archive the selected DFS/structured-repair checkpoint and explicitly restart')
             command.add_argument('--backend', choices=('auto', 'cuda', 'opencl'), default='auto')
             command.add_argument('--replicas', type=int, default=4096)
@@ -69,6 +70,10 @@ def parser():
     commands.add_parser('diagnose-assignment', help='Compare GPU placement costs with exact CPU matching on bounded fixtures')
     commands.add_parser('diagnose-exact', help='Run small offline CPU search-engine correctness checks')
     commands.add_parser('exact', help='Run an offline exact CPU search; exact --help lists options')
+    commands.add_parser('repair-radius', help='Check a board for improvements within a bounded number of changed cells')
+    commands.add_parser('repair-parent-pair', help='Rank local parent boards for a two-parent repair attempt')
+    commands.add_parser('repair-patches', help='Combine locally supplied candidate patches and validate the resulting board')
+    commands.add_parser('perfect-distance', help='Certify a lower bound on changed cells required for 480')
     commands.add_parser('export-best', help='Save validated candidate files locally for manual review; never uploads')
     return result
 
@@ -78,6 +83,8 @@ def run_arguments(args):
         result = ['--state-dir', str(state_root(args.state_dir)), '--engine', args.exact_engine,
                   '--workers', str(args.workers), '--seed', str(args.seed), '--port', str(args.port),
                   '--pruning', args.pruning]
+        if args.exact_engine in ('matching','gpu-matching') and args.repair_quality != 'baseline':
+            result.extend(['--repair-quality', args.repair_quality])
         if args.fresh_exact:
             result.append('--fresh-exact')
         if args.exact_engine == 'gpu-matching':
@@ -165,7 +172,7 @@ def start(args):
     url = ensure_dashboard(home, args.port)
     payload = json.dumps({'method': args.method, 'exact_engine': args.exact_engine, 'workers': args.workers, 'replicas': args.replicas, 'backend': args.backend,
                           'seed': args.seed, 'seconds': args.seconds, 'no_library': args.no_library,
-                          'pruning': args.pruning, 'fresh_exact': args.fresh_exact, 'gpu_repair_batch': args.gpu_repair_batch}).encode()
+                          'pruning': args.pruning, 'fresh_exact': args.fresh_exact, 'gpu_repair_batch': args.gpu_repair_batch, 'repair_quality': args.repair_quality}).encode()
     request = urllib.request.Request(url + 'start', data=payload,
                                      headers={'Content-Type': 'application/json'}, method='POST')
     with local_urlopen(request, timeout=10) as response:
@@ -214,6 +221,18 @@ def main(argv=None):
     if argv and argv[0] == 'exact':
         from exact_worker import main as exact_search
         return exact_search(argv[1:])
+    if argv and argv[0] == 'repair-radius':
+        from repair_radius_cli import main as repair_radius
+        return repair_radius(argv[1:])
+    if argv and argv[0] == 'repair-parent-pair':
+        from repair_parent_pair_cli import main as parent_pair
+        return parent_pair(argv[1:])
+    if argv and argv[0] == 'repair-patches':
+        from repair_patches_cli import main as repair_patches
+        return repair_patches(argv[1:])
+    if argv and argv[0] == 'perfect-distance':
+        from perfect_distance_cli import main as distance
+        return distance(argv[1:])
     if argv and argv[0] == 'export-best':
         from manual_export import main as export_best
         return export_best(argv[1:])

@@ -2,7 +2,6 @@
 from dataclasses import replace
 import itertools
 import threading
-import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -112,10 +111,16 @@ class ExactCpTests(unittest.TestCase):
     def test_model_construction_consumes_the_same_wall_budget(self):
         problem, _ = generated_problem(2, 2, 4)
         original = self.cp_model.CpModel.add_allowed_assignments
+        elapsed = 0.0
+
         def slow_table(model, variables, tuples):
-            time.sleep(.03)  # Represent one indivisible native construction call.
+            nonlocal elapsed
+            elapsed += .03  # One indivisible native construction call.
             return original(model, variables, tuples)
-        with patch.object(self.cp_model.CpModel, 'add_allowed_assignments', slow_table), \
+
+        clock = SimpleNamespace(monotonic=lambda: elapsed)
+        with patch.object(exact_cp, 'time', clock), \
+             patch.object(self.cp_model.CpModel, 'add_allowed_assignments', slow_table), \
              patch.object(self.cp_model, 'CpSolver', side_effect=AssertionError('No second search budget')):
             result = exact_cp.solve(problem, seconds=.01)
         self.assertEqual(result['outcome'], 'timeout')

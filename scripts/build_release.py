@@ -18,6 +18,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from build_support import resource_files, documentation_files
+from build_radius_helper import build as build_radius_helper
 
 def sha256(path):
     result = hashlib.sha256()
@@ -69,6 +70,7 @@ def main():
     version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     if sys.platform == "darwin" and args.flavor != "opencl":
         parser.error("macOS builds use OpenCL")
+    build_radius_helper(ROOT)
     write_metadata(args.flavor, version)
     environment = os.environ.copy()
     environment["ETERNITY_BUILD_CUDA"] = "1" if args.flavor == "cuda-opencl" else "0"
@@ -84,10 +86,27 @@ def main():
             raise RuntimeError(f"Bundled host C++ runtimes would shadow system GPU drivers: {shadowed}")
     if not args.skip_smoke:
         with tempfile.TemporaryDirectory(prefix="eternity-frozen-smoke-") as temporary:
+            helper_name = "eternity-radius.exe" if sys.platform == "win32" else "eternity-radius"
+            helpers = {path.resolve() for path in app.rglob(helper_name) if path.parent.name == "native"}
+            if len(helpers) != 1:
+                raise RuntimeError("Expected one packaged radius helper")
+            # One fixed tile with four gray faces, no legal changes and no work to charge.
+            radius_input = "1 4 1\n" + "0 0 0 0\n" * 4 + "0\n0\n1 0\n"
+            native = subprocess.run([str(helpers.pop())], input=radius_input, cwd=temporary,
+                                    capture_output=True, text=True, check=True, timeout=30)
+            if native.stdout.split() != ["complete"] + ["0"] * 8:
+                raise RuntimeError(f"Frozen native radius helper failed its fixed-board check: {native.stdout}")
             checked = subprocess.run([str(executable), "validate"], cwd=temporary, capture_output=True, text=True, check=True, timeout=90)
             report = json.loads(checked.stdout)
             if not report.get("valid") or report.get("score") != 466:
                 raise RuntimeError(f"Frozen resource validation failed: {report}")
+            repair = subprocess.run([str(executable), "repair-radius", str(ROOT / "data" / "record466.json"),
+                                     "--radius", "8", "--seconds", "600"], cwd=temporary,
+                                    capture_output=True, text=True, check=True, timeout=630)
+            radius_report = json.loads(repair.stdout)
+            if (radius_report.get("termination") != "exhausted" or radius_report.get("max_exhausted_radius") != 8
+                    or radius_report.get("score") != 466 or not radius_report.get("native_phases")):
+                raise RuntimeError(f"Frozen radius-eight verification failed: {radius_report.get('termination')}")
             subprocess.run([str(executable), "status", "--json", "--state-dir", temporary], cwd=temporary, check=True, timeout=30)
             exported = subprocess.run([str(executable), "export-best", "--state-dir", temporary],
                                       cwd=temporary, capture_output=True, text=True, check=True, timeout=30)
@@ -102,7 +121,7 @@ def main():
             subprocess.run([sys.executable, str(ROOT / "scripts" / "smoke_exact_app.py"),
                             "--executable", str(executable), "--output", str(ROOT / "build" / "exact-app-smoke.json")],
                            cwd=temporary, check=True, timeout=180)
-            for command in ("diagnose", "boinc", "inspect-cpu", "export-best", "exact", "diagnose-exact", "diagnose-hybrid", "diagnose-assignment"):
+            for command in ("diagnose", "boinc", "inspect-cpu", "export-best", "exact", "diagnose-exact", "diagnose-hybrid", "diagnose-assignment", "repair-radius", "repair-patches", "repair-parent-pair", "perfect-distance"):
                 subprocess.run([str(executable), command, "--help"], cwd=temporary,
                                capture_output=True, text=True, check=True, timeout=30)
     # Top-level readable documentation accompanies the app and its dependency notices.

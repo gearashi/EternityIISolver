@@ -26,7 +26,7 @@ jobs:
           - {target: windows-x64, os: windows-2022, flavor: cuda-opencl}
           - {target: linux-x64, os: ubuntu-22.04, flavor: cuda-opencl}
           - {target: macos-x64, os: macos-15-intel, flavor: opencl}
-          - {target: macos-arm64, os: macos-14, flavor: opencl}
+          - {target: macos-arm64, os: macos-15, flavor: opencl}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -45,8 +45,12 @@ jobs:
       - name: Install CUDA component wheels
         if: matrix.flavor == 'cuda-opencl'
         run: python -m pip install -r requirements-cuda.txt
+      - name: Compile the platform radius helper for integration tests
+        run: python scripts/build_radius_helper.py
       - name: CPU rule, lifecycle, library, backend, and BOINC tests
-        run: python -m unittest test_validator test_library_cache test_library_download test_library_dashboard test_archive_import test_lifecycle test_gpu_backends test_boinc_worker test_boinc_cpu_workunit test_manual_export test_exact_cp test_exact_sat test_exact_dfs test_exact_integration test_exact_worker test_exact_pruning test_hybrid_worker test_hybrid_sampling test_dfs_improvements test_exact_rules test_exact_optimize test_smart_repair test_smart_integration test_exact_parallel test_mismatch_bounds test_exact_sat_session test_exact_sat_optimize test_dfs_adaptive test_parallel_splitting test_gpu_assignment test_binary_pairwise test_dfs_supported test_parallel_cache test_repair_diversify test_repair_parents test_repair_regions test_repair_ties test_repair_policy test_repair_checkpoint test_repair_continuation -v
+        run: python -X utf8 -m unittest discover -s . -p "test_*.py" -v
+      - name: Independently replay the public 466 distance certificate
+        run: python scripts/verify_distance_certificate.py
       - name: Seeded and baseline CPU assignment diagnostics
         run: |
           python -c "import json; from gpu_assignment import diagnose; print(json.dumps(diagnose(backend='cpu',size=6,count=8),indent=2))"

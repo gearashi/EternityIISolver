@@ -286,14 +286,18 @@ def cached_parents(problem, database, *, limit=32, seed=0, should_stop=None, **o
 def checkpoint_settings(*, seed=0, gpu_backend=None, gpu_batch_size=16, bulk_arcs=True,
                         diversify=True, plateau_rounds=8, region_repair_enabled=True,
                         region_every=8, region_seconds=.25, reuse_structure=True,
-                        neutral_ties=False, pair_selection=False, adaptive_regions=False):
+                        neutral_ties=False, pair_selection=False, adaptive_regions=False, repair_quality="baseline"):
     """Only continuation-affecting settings; per-invocation time is excluded."""
-    return dict(seed=seed,gpu_backend=gpu_backend,gpu_batch_size=gpu_batch_size,
+    settings = dict(seed=seed,gpu_backend=gpu_backend,gpu_batch_size=gpu_batch_size,
                 bulk_arcs=bulk_arcs,diversify=diversify,plateau_rounds=plateau_rounds,
                 region_repair_enabled=region_repair_enabled,region_every=region_every,
                 region_seconds=region_seconds,reuse_structure=reuse_structure,
                 neutral_ties=neutral_ties,pair_selection=pair_selection,
                 adaptive_regions=adaptive_regions)
+    if repair_quality not in ("baseline", "guided", "guided-lift", "bounded", "learned", "partition-bounds", "price-bounds"): raise ValueError("Invalid repair quality policy")
+    # Preserve v0.4.0 baseline continuation fingerprints exactly.
+    if repair_quality != "baseline": settings["repair_quality"] = repair_quality
+    return settings
 
 
 def solve(problem, reference, *, seconds=60, seed=0, workers=1, parents=None,
@@ -301,7 +305,7 @@ def solve(problem, reference, *, seconds=60, seed=0, workers=1, parents=None,
           gpu_backend=None, gpu_batch_size=16, gpu_cache_dir=None, gpu_allow_cpu_fallback=False,
           bulk_arcs=True, diversify=True, plateau_rounds=8,
           region_repair_enabled=True, region_every=8, region_seconds=.25,
-          reuse_structure=True, neutral_ties=False, pair_selection=False, adaptive_regions=False,
+          reuse_structure=True, neutral_ties=False, pair_selection=False, adaptive_regions=False, repair_quality="baseline",
           checkpoint=None, on_checkpoint=None, checkpoint_interval=10., max_batches=None):
     """Offline structured repair with legal ties and compatible continuation.
 
@@ -333,6 +337,7 @@ def solve(problem, reference, *, seconds=60, seed=0, workers=1, parents=None,
     if max_batches is not None and (type(max_batches) is not int or not 1<=max_batches<=100000): raise ValueError('max_batches must be 1..100000')
     if gpu_backend not in (None,'auto','cuda','opencl'): raise ValueError('Invalid GPU backend')
     if type(gpu_batch_size) is not int or not 1<=gpu_batch_size<=64: raise ValueError('gpu_batch_size must be 1..64')
+    if repair_quality not in ("baseline", "guided", "guided-lift", "bounded", "learned", "partition-bounds", "price-bounds"): raise ValueError("Invalid repair quality policy")
     _require(problem,reference)
     deadline=start+seconds;rng=random.Random(seed)
     def stopped(): return bool(should_stop and should_stop())
@@ -345,7 +350,7 @@ def solve(problem, reference, *, seconds=60, seed=0, workers=1, parents=None,
     settings=checkpoint_settings(seed=seed,gpu_backend=gpu_backend,gpu_batch_size=gpu_batch_size,
         bulk_arcs=bulk_arcs,diversify=diversify,plateau_rounds=plateau_rounds,
         region_repair_enabled=region_repair_enabled,region_every=region_every,region_seconds=region_seconds,
-        reuse_structure=reuse_structure,neutral_ties=neutral_ties,pair_selection=pair_selection,adaptive_regions=adaptive_regions)
+        reuse_structure=reuse_structure,neutral_ties=neutral_ties,pair_selection=pair_selection,adaptive_regions=adaptive_regions,repair_quality=repair_quality)
     checkpointing=checkpoint is not None or on_checkpoint is not None
     codec=CheckpointCodec(problem,settings) if checkpointing else None
     best=list(reference);best_score=score(problem,best);initial=best_score
@@ -356,144 +361,192 @@ def solve(problem, reference, *, seconds=60, seed=0, workers=1, parents=None,
     max_score=len(grid_edges(problem.size))
     policy=AdaptiveRegions(max_seconds=min(5.,4*region_seconds),share=.2) if adaptive_regions else None
     selector=PairSelector(problem) if pair_selection else None
-    def valid(board): return validator.structurally_valid(board) if reuse_structure else structurally_valid(problem,board)
-    def accept(candidate):
-        nonlocal best,best_score
-        if not valid(candidate): raise RuntimeError('Invalid repair result')
-        value=score(problem,candidate)
-        if value>best_score:
-            best,best_score=list(candidate),value
-            if on_improvement: on_improvement({'board':best.copy(),'score':value,'elapsed_seconds':time.monotonic()-start,
-                'backend':'structured-repair-portfolio','branches':None,'conflicts':None})
-        return value
-    if checkpoint is not None:
-        restored=codec.decode(checkpoint)
-        bank=restored['bank'];bank_scores=restored['bank_scores'];peaks=restored['peaks'];stalls=restored['stalls']
-        recent=[deque(map(tuple,items),maxlen=12) for items in restored['recent']]
-        rng.setstate(restore_rng_state(restored['rng_state']))
-        completed=restored['completed'];cycle_calls=restored['cycle_calls'];rounds=restored['rounds'];batches=restored['batches']
-        counts=restored['counts'];elapsed_prior=restored['elapsed_total'];seen=OrderedDict.fromkeys(restored['seen'])
-        if set(restored['policy_state'])!={'regions'}: raise ValueError('Invalid repair policy state')
-        if policy is not None: policy.restore_state(restored['policy_state']['regions'])
-        elif restored['policy_state']['regions'] is not None: raise ValueError('Unexpected adaptive repair state')
-        accept(restored['best'])
-    else:
-        if not ended():
-            for parent in itertools.islice(parents or (),64):
-                if ended(): break
-                if not valid(parent): raise ValueError('Illegal cached repair parent')
-                if parent not in bank: bank.append(list(parent))
-                if len(bank)>=64: break
-        for board in bank: accept(board)
-        bank_scores=[score(problem,b) for b in bank];peaks=list(bank_scores);stalls=[0]*len(bank)
-        recent=[deque([tuple(b)],maxlen=12) for b in bank]
-    diversifier=None;invocation_batches=0
-    def cost_stats():
-        return evaluator.stats() if evaluator is not None else {'cost_backend':'cpu','cost_device':'CPU','cost_batches':0,'cost_pairs':0,'cost_kernel_seconds':0.,'cost_fallback_reason':None}
-    def progress(phase='matching_and_cycle_repair', force=False):
-        nonlocal last_progress
-        now=time.monotonic()
-        if on_progress and (force or now-last_progress>=.25):
-            last_progress=now
-            on_progress({'phase':phase,'neighborhoods':completed,'recombinations':cycle_calls,
-                'best_score':best_score,'elapsed_seconds':now-start,'parent_count':len(bank),
-                'backend':'GPU costs + CPU matching, cycles and regions' if evaluator is not None and evaluator.backend in ('cuda','opencl') else 'CPU matching, cycles and regions',**counts,**cost_stats()})
-    def capture():
-        return dict(best=best.copy(),best_score=best_score,bank=list(bank),bank_scores=list(bank_scores),peaks=list(peaks),stalls=list(stalls),
-            recent=[list(items) for items in recent],rng_state=rng.getstate(),completed=completed,cycle_calls=cycle_calls,
-            rounds=rounds,batches=batches,counts=dict(counts),seen=list(seen),elapsed_total=elapsed_prior+time.monotonic()-start,
-            policy_state={'regions':policy.export_state() if policy is not None else None})
-    boundary=capture() if checkpointing else None
-    def encoded_boundary():
-        state=dict(boundary)
-        if best_score>state['best_score']: state.update(best=best.copy(),best_score=best_score)
-        return codec.encode(state)
-    while not ended() and best_score<max_score and (max_batches is None or invocation_batches<max_batches):
-        pending=[];pending_keys=set();touched=set();advanced=set();batches+=1;invocation_batches+=1
-        tie_seed=rng.randrange(2**32) if neutral_ties else None
-        for _ in range(gpu_batch_size if evaluator is not None else 1):
-            if ended(): break
-            index=rounds%len(bank);parent=bank[index];touched.add(index)
-            cells=independent_cells(problem,seed=rng.randrange(2**32),parity=(rounds//len(bank))%2 if rounds<2*len(bank) else None)
-            key=neighborhood_key(parent,cells,tie_seed=tie_seed);rounds+=1
-            if key not in seen and key not in pending_keys:
-                pending.append((index,parent,cells,key));pending_keys.add(key)
-        def adopt(index,candidate):
-            value=accept(candidate);key=tuple(candidate)
-            if key==tuple(bank[index]): return
-            if diversify and key in recent[index] and value<=peaks[index]: counts['tabu_rejections']+=1;return
-            if value>=bank_scores[index]:
-                bank[index]=list(candidate);bank_scores[index]=value;recent[index].append(key)
-                if value>peaks[index]: peaks[index]=value;advanced.add(index)
-        repaired_list=[]
-        if pending:
-            if evaluator is None:
-                repaired_list=[assignment_repair(problem,pending[0][1],pending[0][2],should_stop=ended,bulk_arcs=bulk_arcs,tie_seed=tie_seed)]
-            else:
-                try:
-                    repaired_list=assignment_repair_batch(problem,[(parent,cells) for _,parent,cells,_ in pending],
-                        evaluator=evaluator,should_stop=ended,bulk_arcs=bulk_arcs,tie_seed=tie_seed)
-                except AssignmentCancelled: break
-            for (index,parent,cells,key),repaired in zip(pending,repaired_list):
-                if repaired['optimal']:
-                    completed+=1;seen[key]=None
-                    while len(seen)>4096: seen.popitem(last=False)
-                    adopt(index,repaired['board'])
-        if rounds%4==0 and len(bank)>1 and not ended() and best_score<max_score:
-            pair=None
-            pair_indices=[(rounds+i)%len(bank) for i in range(min(63,len(bank)))]
-            pair_bank=[best]+[bank[i] for i in pair_indices]
-            if selector is not None: pair=selector.choose(pair_bank,seed=rng.randrange(2**32),should_stop=ended)
-            if pair is not None:
-                left=pair_bank[pair['left']];right=pair_bank[pair['right']]
-                target=pair['right'] if pair['right'] else pair['left'];index=pair_indices[target-1]
-            else:
-                index=rng.randrange(len(bank));left=best;right=bank[index]
+    quality=None;region_session=None
+    try:
+        if repair_quality in ("guided","guided-lift"):
+            from repair_quality import QualityRepairController
+            quality=QualityRepairController(problem,lift_rotations=True) if repair_quality=="guided-lift" else QualityRepairController(problem)
+        if repair_quality=="guided-lift":
+            from repair_witnesses import WitnessRegionSession
+            region_session=WitnessRegionSession(problem)
+        def valid(board): return validator.structurally_valid(board) if reuse_structure else structurally_valid(problem,board)
+        def accept(candidate):
+            nonlocal best,best_score
+            if not valid(candidate): raise RuntimeError('Invalid repair result')
+            value=score(problem,candidate)
+            if value>best_score:
+                best,best_score=list(candidate),value
+                if on_improvement: on_improvement({'board':best.copy(),'score':value,'elapsed_seconds':time.monotonic()-start,
+                    'backend':'structured-repair-portfolio','branches':None,'conflicts':None})
+            return value
+        if checkpoint is not None:
+            restored=codec.decode(checkpoint)
+            bank=restored['bank'];bank_scores=restored['bank_scores'];peaks=restored['peaks'];stalls=restored['stalls']
+            recent=[deque(map(tuple,items),maxlen=12) for items in restored['recent']]
+            rng.setstate(restore_rng_state(restored['rng_state']))
+            completed=restored['completed'];cycle_calls=restored['cycle_calls'];rounds=restored['rounds'];batches=restored['batches']
+            counts=restored['counts'];elapsed_prior=restored['elapsed_total'];seen=OrderedDict.fromkeys(restored['seen'])
+            fields = {'regions','quality'} if quality is not None else {'regions'}
+            if repair_quality=="guided-lift":
+                fields.add('witnesses')
+            if set(restored['policy_state']) != fields:
+                raise ValueError('Invalid repair policy state')
+            if repair_quality=="guided-lift":
+                region_session.restore_state(restored['policy_state']['witnesses'])
+            if quality is not None: quality.restore_state(restored['policy_state']['quality'])
+            if policy is not None: policy.restore_state(restored['policy_state']['regions'])
+            elif restored['policy_state']['regions'] is not None: raise ValueError('Unexpected adaptive repair state')
+            accept(restored['best'])
+        else:
             if not ended():
-                combined=cycle_recombine(problem,left,right,seconds=min(.25,max(0,deadline-time.monotonic())),seed=rng.randrange(2**31),should_stop=ended)
-                cycle_calls+=1;adopt(index,combined['board']);touched.add(index)
-        for index in sorted(touched):
-            stalls[index]=0 if index in advanced else stalls[index]+1
-            if not diversify or stalls[index]<plateau_rounds or ended() or best_score==max_score: continue
-            if diversifier is None:
-                from repair_diversify import Diversifier
-                diversifier=Diversifier(problem)
-            counts['diversification_attempts']+=1
-            changed=diversifier.perturb(bank[index],seed=rng.randrange(2**32),moves=2+(counts['diversification_attempts']%7),forbidden_boards=recent[index],should_stop=ended)
-            stalls[index]=0
-            if changed['changed']:
-                counts['diversifications']+=1;bank[index]=list(changed['board']);bank_scores[index]=accept(bank[index])
-                recent[index].append(tuple(bank[index]));peaks[index]=max(peaks[index],bank_scores[index])
-        if region_repair_enabled and batches%region_every==0 and not ended() and best_score<max_score:
-            elapsed=elapsed_prior+time.monotonic()-start
-            plan=policy.plan(elapsed_seconds=elapsed,remaining_seconds=max(0.,deadline-time.monotonic()),should_stop=ended) if policy else None
-            allowance=plan['seconds'] if plan else (0. if policy else min(region_seconds,deadline-time.monotonic(),max(0.,.2*elapsed-counts['region_seconds'])))
-            if allowance>=.02:
-                from repair_regions import select_region,region_repair
-                region_started=time.monotonic();region_deadline=region_started+allowance;previous=best_score
-                def region_stop(): return ended() or time.monotonic()>=region_deadline
-                cells=select_region(problem,best,seed=rng.randrange(2**32),region_size=plan['region_size'] if plan else 8+4*(counts['region_calls']%4),
-                    donor_count=plan['donor_count'] if plan else 2+2*((counts['region_calls']//4)%3),should_stop=region_stop)
-                if cells and not region_stop():
-                    counts['region_calls']+=1;progress('connected_region_repair',force=True)
-                    result=region_repair(problem,best,cells,seconds=max(0.,region_deadline-time.monotonic()),seed=rng.randrange(2**31),should_stop=region_stop)
-                    accept(result['board'])
-                    if best_score>previous:
-                        counts['region_improvements']+=1;index=min(range(len(bank)),key=bank_scores.__getitem__)
-                        bank[index]=best.copy();bank_scores[index]=best_score;peaks[index]=max(peaks[index],best_score);stalls[index]=0;recent[index].append(tuple(best))
-                spent=time.monotonic()-region_started;counts['region_seconds']+=spent
-                if policy is not None: policy.observe(plan['arm'],elapsed_seconds=spent,score_gain=best_score-previous)
-        # Native interruptions and partial batches are deliberately replayed.
-        if checkpointing and not ended() and len(repaired_list)==len(pending) and all(r['optimal'] for r in repaired_list):
-            boundary=capture()
-            if on_checkpoint and time.monotonic()-last_checkpoint>=checkpoint_interval:
-                on_checkpoint(deepcopy(encoded_boundary()));last_checkpoint=time.monotonic()
-        progress()
-    termination='perfect_board_validated' if best_score==max_score else 'stopped' if stopped() else 'batch_limit' if max_batches is not None and invocation_batches>=max_batches else 'timeout'
-    saved=encoded_boundary() if checkpointing else None
-    if on_checkpoint: on_checkpoint(deepcopy(saved))
-    return {'outcome':'solved' if best_score==max_score else 'stopped' if termination=='stopped' else 'timeout',
-        'termination':termination,'board':best,'score':best_score,'reference_score':initial,'improved':best_score>initial,'max_score':max_score,
-        'neighborhoods':completed,'recombinations':cycle_calls,'elapsed_seconds':time.monotonic()-start,
-        'elapsed_total':elapsed_prior+time.monotonic()-start,'parent_count':len(bank),'resumed':checkpoint is not None,
-        'checkpoint':saved,'proof_scope':'completed repair neighborhoods with frozen complements only',**counts,**cost_stats()}
+                for parent in itertools.islice(parents or (),64):
+                    if ended(): break
+                    if not valid(parent): raise ValueError('Illegal cached repair parent')
+                    if parent not in bank: bank.append(list(parent))
+                    if len(bank)>=64: break
+            for board in bank: accept(board)
+            bank_scores=[score(problem,b) for b in bank];peaks=list(bank_scores);stalls=[0]*len(bank)
+            recent=[deque([tuple(b)],maxlen=12) for b in bank]
+        diversifier=None;invocation_batches=0
+        def cost_stats():
+            return evaluator.stats() if evaluator is not None else {'cost_backend':'cpu','cost_device':'CPU','cost_batches':0,'cost_pairs':0,'cost_kernel_seconds':0.,'cost_fallback_reason':None}
+        def quality_stats():
+            return {"repair_quality":repair_quality, "region_cache_hits":region_session.cache_hits if region_session else 0,
+                    **(quality.stats() if quality is not None else {}),
+                    **(region_session.stats() if region_session is not None and hasattr(region_session,"stats") else {})}
+        def progress(phase='matching_and_cycle_repair', force=False):
+            nonlocal last_progress
+            now=time.monotonic()
+            if on_progress and (force or now-last_progress>=.25):
+                last_progress=now
+                on_progress({'phase':phase,'neighborhoods':completed,'recombinations':cycle_calls,
+                    'best_score':best_score,'elapsed_seconds':now-start,'parent_count':len(bank),
+                    'backend':'GPU costs + CPU matching, cycles and regions' if evaluator is not None and evaluator.backend in ('cuda','opencl') else 'CPU matching, cycles and regions',**counts,**cost_stats(),**quality_stats()})
+        def capture():
+            return dict(best=best.copy(),best_score=best_score,bank=list(bank),bank_scores=list(bank_scores),peaks=list(peaks),stalls=list(stalls),
+                recent=[list(items) for items in recent],rng_state=rng.getstate(),completed=completed,cycle_calls=cycle_calls,
+                rounds=rounds,batches=batches,counts=dict(counts),seen=list(seen),elapsed_total=elapsed_prior+time.monotonic()-start,
+                policy_state={'regions':policy.export_state() if policy is not None else None,
+                              **({'quality':quality.export_state()} if quality is not None else {}),
+                              **({'witnesses':region_session.export_state()} if repair_quality=="guided-lift" else {})})
+        boundary=capture() if checkpointing else None
+        def encoded_boundary():
+            state=dict(boundary)
+            if best_score>state['best_score']: state.update(best=best.copy(),best_score=best_score)
+            return codec.encode(state)
+        while not ended() and best_score<max_score and (max_batches is None or invocation_batches<max_batches):
+            pending=[];pending_keys=set();touched=set();advanced=set();batches+=1;invocation_batches+=1
+            tie_seed=rng.randrange(2**32) if neutral_ties else None
+            for _ in range(gpu_batch_size if evaluator is not None else 1):
+                if ended(): break
+                index=rounds%len(bank);parent=bank[index];touched.add(index)
+                cells=independent_cells(problem,seed=rng.randrange(2**32),parity=(rounds//len(bank))%2 if rounds<2*len(bank) else None)
+                key=neighborhood_key(parent,cells,tie_seed=tie_seed);rounds+=1
+                if key not in seen and key not in pending_keys:
+                    pending.append((index,parent,cells,key));pending_keys.add(key)
+            def adopt(index,candidate):
+                value=accept(candidate);key=tuple(candidate)
+                if key==tuple(bank[index]): return False
+                if diversify and key in recent[index] and value<=peaks[index]: counts['tabu_rejections']+=1;return False
+                if value>=bank_scores[index]:
+                    bank[index]=list(candidate);bank_scores[index]=value;recent[index].append(key)
+                    if value>peaks[index]: peaks[index]=value;advanced.add(index)
+                    return True
+                return False
+            repaired_list=[]
+            if pending:
+                if evaluator is None:
+                    repaired_list=[assignment_repair(problem,pending[0][1],pending[0][2],should_stop=ended,bulk_arcs=bulk_arcs,tie_seed=tie_seed)]
+                else:
+                    try:
+                        repaired_list=assignment_repair_batch(problem,[(parent,cells) for _,parent,cells,_ in pending],
+                            evaluator=evaluator,should_stop=ended,bulk_arcs=bulk_arcs,tie_seed=tie_seed)
+                    except AssignmentCancelled: break
+                for (index,parent,cells,key),repaired in zip(pending,repaired_list):
+                    if repaired['optimal']:
+                        completed+=1;seen[key]=None
+                        while len(seen)>4096: seen.popitem(last=False)
+                        adopt(index,repaired['board'])
+            if rounds%4==0 and len(bank)>1 and not ended() and best_score<max_score:
+                pair=None
+                pair_indices=[(rounds+i)%len(bank) for i in range(min(63,len(bank)))]
+                pair_bank=[best]+[bank[i] for i in pair_indices]
+                if selector is not None: pair=selector.choose(pair_bank,seed=rng.randrange(2**32),should_stop=ended)
+                if pair is not None:
+                    left=pair_bank[pair['left']];right=pair_bank[pair['right']]
+                    target=pair['right'] if pair['right'] else pair['left'];index=pair_indices[target-1]
+                else:
+                    index=rng.randrange(len(bank));left=best;right=bank[index]
+                if not ended():
+                    union=[]
+                    if quality is not None and cycle_calls%3==2:
+                        for candidate in [left,right,best]+bank:
+                            if candidate not in union: union.append(candidate)
+                            if len(union)==3: break
+                    if len(union)==3:
+                        combined=quality.recombine(union,seconds=min(.25,max(0,deadline-time.monotonic())),seed=rng.randrange(2**31),should_stop=ended)
+                    else:
+                        combined=cycle_recombine(problem,left,right,seconds=min(.25,max(0,deadline-time.monotonic())),seed=rng.randrange(2**31),should_stop=ended)
+                    cycle_calls+=1;previous_board=bank[index].copy()
+                    adopted=adopt(index,combined['board']);touched.add(index)
+                    if len(union)==3 and adopted: quality.record_adoption(previous_board,bank[index])
+            for index in sorted(touched):
+                stalls[index]=0 if index in advanced else stalls[index]+1
+                if not diversify or stalls[index]<plateau_rounds or ended() or best_score==max_score: continue
+                if quality is not None:
+                    guided=quality.eject(bank[index],seed=rng.randrange(2**32),should_stop=ended)
+                    accept(guided["best_true_board"])
+                    previous_board=bank[index].copy()
+                    if guided["changed"] and adopt(index,guided["best_true_board"]):
+                        quality.record_adoption(previous_board,bank[index]);stalls[index]=0
+                        continue
+                    if ended(): break
+                if diversifier is None:
+                    from repair_diversify import Diversifier
+                    diversifier=Diversifier(problem)
+                counts['diversification_attempts']+=1
+                changed=diversifier.perturb(bank[index],seed=rng.randrange(2**32),moves=2+(counts['diversification_attempts']%7),forbidden_boards=recent[index],should_stop=ended)
+                stalls[index]=0
+                if changed['changed']:
+                    counts['diversifications']+=1;bank[index]=list(changed['board']);bank_scores[index]=accept(bank[index])
+                    recent[index].append(tuple(bank[index]));peaks[index]=max(peaks[index],bank_scores[index])
+            if region_repair_enabled and batches%region_every==0 and not ended() and best_score<max_score:
+                elapsed=elapsed_prior+time.monotonic()-start
+                plan=policy.plan(elapsed_seconds=elapsed,remaining_seconds=max(0.,deadline-time.monotonic()),should_stop=ended) if policy else None
+                allowance=plan['seconds'] if plan else (0. if policy else min(region_seconds,deadline-time.monotonic(),max(0.,.2*elapsed-counts['region_seconds'])))
+                if allowance>=.02:
+                    from repair_regions import select_region,RegionRepairSession
+                    if region_session is None:
+                        if repair_quality in ("bounded","learned","partition-bounds","price-bounds"):
+                            from repair_reasoning import ReasoningRegionSession
+                            region_session=ReasoningRegionSession(problem,repair_quality)
+                        else: region_session=RegionRepairSession(problem)
+                    region_started=time.monotonic();region_deadline=region_started+allowance;previous=best_score
+                    def region_stop(): return ended() or time.monotonic()>=region_deadline
+                    cells=select_region(problem,best,seed=rng.randrange(2**32),region_size=plan['region_size'] if plan else 8+4*(counts['region_calls']%4),
+                        donor_count=plan['donor_count'] if plan else 2+2*((counts['region_calls']//4)%3),should_stop=region_stop)
+                    if cells and not region_stop():
+                        counts['region_calls']+=1;progress('connected_region_repair',force=True)
+                        result=region_session.solve(best,cells,seconds=max(0.,region_deadline-time.monotonic()),seed=rng.randrange(2**31),should_stop=region_stop)
+                        accept(result['board'])
+                        if best_score>previous:
+                            counts['region_improvements']+=1;index=min(range(len(bank)),key=bank_scores.__getitem__)
+                            bank[index]=best.copy();bank_scores[index]=best_score;peaks[index]=max(peaks[index],best_score);stalls[index]=0;recent[index].append(tuple(best))
+                    spent=time.monotonic()-region_started;counts['region_seconds']+=spent
+                    if policy is not None: policy.observe(plan['arm'],elapsed_seconds=spent,score_gain=best_score-previous)
+            # Native interruptions and partial batches are deliberately replayed.
+            if checkpointing and not ended() and len(repaired_list)==len(pending) and all(r['optimal'] for r in repaired_list):
+                boundary=capture()
+                if on_checkpoint and time.monotonic()-last_checkpoint>=checkpoint_interval:
+                    on_checkpoint(deepcopy(encoded_boundary()));last_checkpoint=time.monotonic()
+            progress()
+        termination='perfect_board_validated' if best_score==max_score else 'stopped' if stopped() else 'batch_limit' if max_batches is not None and invocation_batches>=max_batches else 'timeout'
+        saved=encoded_boundary() if checkpointing else None
+        if on_checkpoint: on_checkpoint(deepcopy(saved))
+        return {'outcome':'solved' if best_score==max_score else 'stopped' if termination=='stopped' else 'timeout',
+            'termination':termination,'board':best,'score':best_score,'reference_score':initial,'improved':best_score>initial,'max_score':max_score,
+            'neighborhoods':completed,'recombinations':cycle_calls,'elapsed_seconds':time.monotonic()-start,
+            'elapsed_total':elapsed_prior+time.monotonic()-start,'parent_count':len(bank),'resumed':checkpoint is not None,
+            'checkpoint':saved,'proof_scope':'completed repair neighborhoods with frozen complements only',**counts,**cost_stats(),**quality_stats()}
+    finally:
+        if region_session is not None and hasattr(region_session,"close"): region_session.close()

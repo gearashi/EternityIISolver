@@ -19,7 +19,7 @@ from validator import load_bundle, validate_board
 
 DEFAULT_SETTINGS = {'replicas': 4096, 'backend': 'auto', 'seed': 20261007,
                     'no_library': False, 'seconds': None, 'method': 'gpu', 'exact_engine': 'dfs', 'workers': 1,
-                    'pruning': 'baseline', 'fresh_exact': False, 'gpu_repair_batch': 16}
+                    'pruning': 'baseline', 'fresh_exact': False, 'gpu_repair_batch': 16, 'repair_quality': 'baseline'}
 MAX_BODY = 4096
 
 
@@ -29,9 +29,11 @@ def validate_settings(value):
     settings = dict(DEFAULT_SETTINGS, **value)
     if settings['method'] not in ('gpu', 'exact'):
         raise ValueError('Search method must be gpu or exact')
-    if settings['exact_engine'] not in ('dfs', 'sat', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching'):
+    if settings['exact_engine'] not in ('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs'):
         raise ValueError('Unsupported CPU search engine')
-    if settings['pruning'] not in ('baseline', 'strong', 'full', 'adaptive') or type(settings['fresh_exact']) is not bool:
+    if settings['repair_quality'] not in ('baseline','guided','guided-lift','bounded','learned','partition-bounds','price-bounds'):
+        raise ValueError('Invalid repair quality policy')
+    if settings['pruning'] not in ('baseline', 'strong', 'full', 'adaptive', 'components', 'joint', 'relational') or type(settings['fresh_exact']) is not bool:
         raise ValueError('Invalid pruning profile or fresh-exact setting')
     if type(settings['gpu_repair_batch']) is not int or not 1 <= settings['gpu_repair_batch'] <= 64:
         raise ValueError('GPU repair batch must be 1..64 neighborhoods')
@@ -61,6 +63,8 @@ def worker_command(home, port, settings):
         command.extend(['exact', '--preserve-stop', '--state-dir', str(home), '--port', str(port),
                         '--engine', settings['exact_engine'], '--workers', str(settings['workers']), '--seed', str(settings['seed']),
                         '--pruning', settings.get('pruning', 'baseline')])
+        if settings['exact_engine'] in ('matching','gpu-matching') and settings.get('repair_quality','baseline') != 'baseline':
+            command.extend(['--repair-quality',settings['repair_quality']])
         if settings.get('fresh_exact'):
             command.append('--fresh-exact')
         if settings['exact_engine'] == 'gpu-matching':
@@ -199,7 +203,9 @@ class DashboardServer(ThreadingHTTPServer):
                     # Trust a newly written worker status, never stale PID equality.
                     if not fresh_status:
                         saved.update(state='starting', pid=self.worker.pid, process_alive=True)
-                        saved.update({key: self.settings[key] for key in ('replicas', 'backend', 'seed', 'method', 'exact_engine', 'workers', 'pruning', 'gpu_repair_batch')})
+                        saved.update({key: self.settings[key] for key in ('replicas', 'backend', 'seed', 'method', 'exact_engine', 'workers', 'pruning', 'gpu_repair_batch', 'repair_quality')})
+                        for key in tuple(saved):
+                            if key.startswith(('quality_','region_reasoning_')) or key in ('region_cache_hits','component_counters_session','rule_counters_session','reasoning_counters_session'): saved.pop(key,None)
                         if self.settings['method'] == 'exact':
                             native = self.settings['exact_engine'] not in ('dfs', 'hybrid', 'partitioned')
                             saved.update(branches=None if native else 0, conflicts=None if native else 0,

@@ -7,6 +7,7 @@ placement: removing its selector restores the corresponding alternatives.
 """
 from __future__ import annotations
 
+from itertools import combinations
 import math
 import random
 import threading
@@ -72,7 +73,8 @@ class AssumptionSession:
     Glucose uses one worker. Seed sets initial placement phases only.
     """
     def __init__(self, problem, seconds=30.0, seed=0, workers=1, should_stop=None,
-                 on_progress=None, *, reverse_support=True):
+                 on_progress=None, *, reverse_support=True,
+                 piece_channels=False, small_pairwise=False):
         seconds = _seconds(seconds)
         if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
             raise ValueError('workers must be a positive integer')
@@ -84,6 +86,10 @@ class AssumptionSession:
             raise ValueError('on_progress must be callable')
         if type(reverse_support) is not bool:
             raise ValueError('reverse_support must be a boolean')
+        if type(piece_channels) is not bool or type(small_pairwise) is not bool:
+            raise ValueError("piece_channels and small_pairwise must be boolean")
+        self.piece_channels = piece_channels
+        self.small_pairwise = small_pairwise
         self.budget = _Budget(seconds, should_stop)
         from exact_model import ExactProblem
         # ExactProblem is frozen, but its fixed mapping and caller-supplied
@@ -168,6 +174,10 @@ class AssumptionSession:
         if len(literals) == 2:
             self._add([-literals[0], -literals[1]])
             return
+        if self.small_pairwise and len(literals) <= 6:
+            for first, second in combinations(literals, 2):
+                self._add([-first, -second])
+            return
         previous = self._new_var()
         self._add([-literals[0], previous])
         for literal in literals[1:-1]:
@@ -186,18 +196,23 @@ class AssumptionSession:
 
     def _progress(self, phase):
         if self.on_progress is not None:
-            self.on_progress({'backend': 'pysat-glucose4', 'phase': phase,
+            self.on_progress({'backend': f'pysat-{self.native_backend}', 'phase': phase,
                               'elapsed_seconds': time.monotonic() - self.budget.started,
                               'variables': self.next_var, 'clauses': self.clause_count,
                               'model_builds': self.model_builds, 'assumption_queries': self.queries})
         self.check()
 
-    def _build(self):
-        self.check()
+    native_backend = 'glucose4'
+
+    def _make_native(self):
         try:
             from pysat.solvers import Glucose4
         except ImportError as exc:
             raise RuntimeError('The SAT backend requires the python-sat package') from exc
+        return Glucose4(incr=True)
+
+    def _build(self):
+        self.check()
         from exact_model import constraint_edges
         self.check()
         problem = self.problem
@@ -213,7 +228,7 @@ class AssumptionSession:
                for c, s in fixed.items()):
             raise ValueError('Invalid fixed cell or state')
         occupied = {state // 4 for state in fixed.values()}
-        self.native = Glucose4(incr=True)
+        self.native = self._make_native()
         self.model_builds += 1
         self._progress('encoding')
         piece_vars = [[] for _ in range(count)]
@@ -222,6 +237,7 @@ class AssumptionSession:
             exterior = (cell < size, cell % size == size - 1,
                         cell >= count - size, cell % size == 0)
             placements, seen = [], set()
+            rotations_by_piece = {}
             for index, state in enumerate(domain):
                 if index % 256 == 0:
                     self.check()
@@ -238,7 +254,20 @@ class AssumptionSession:
                     continue
                 literal = self._new_var()
                 placements.append((state, literal))
-                piece_vars[state // 4].append(literal)
+                if self.piece_channels:
+                    rotations_by_piece.setdefault(state // 4, []).append(literal)
+                else:
+                    piece_vars[state // 4].append(literal)
+            for piece, rotations in rotations_by_piece.items():
+                if len(rotations) == 1:
+                    piece_vars[piece].append(rotations[0])
+                    continue
+                # A cell uses this piece iff one of its allowed rotations is chosen.
+                uses_piece = self._new_var()
+                for literal in rotations:
+                    self._add([-literal, uses_piece])
+                self._add([-uses_piece, *rotations])
+                piece_vars[piece].append(uses_piece)
             self.cell_vars.append(placements)
             self._exactly_one([literal for _, literal in placements])
         for literals in piece_vars:
@@ -418,9 +447,12 @@ class AssumptionSession:
                     self.cell_vars, self.placements, self.selectors = [], [], {}
         if self.budget.callback_error is not None:
             raise RuntimeError('SAT cancellation callback failed') from self.budget.callback_error
-        return {'outcome': outcome, 'board': board, 'backend': 'pysat-glucose4',
+        return {'outcome': outcome, 'board': board, 'backend': f'pysat-{self.native_backend}',
                 'branches': max(0, int(stats.get('decisions', 0)) - int(before.get('decisions', 0))),
                 'conflicts': max(0, int(stats.get('conflicts', 0)) - int(before.get('conflicts', 0))),
+                'native_propagations': max(0, int(stats.get('propagations', 0)) - int(before.get('propagations', 0))),
+                'native_restarts': max(0, int(stats.get('restarts', 0)) - int(before.get('restarts', 0))),
+                'piece_channels': self.piece_channels, 'small_pairwise': self.small_pairwise,
                 'cumulative_branches': int(stats.get('decisions', 0)),
                 'cumulative_conflicts': int(stats.get('conflicts', 0)),
                 'elapsed_seconds': time.monotonic() - started, 'build_seconds': build_seconds,
@@ -436,10 +468,12 @@ class AssumptionSession:
 
 
 def solve(problem, seconds=30.0, seed=0, workers=1, should_stop=None, on_progress=None,
-          *, reverse_support=True, assumptions=None):
+          *, reverse_support=True, assumptions=None,
+          piece_channels=False, small_pairwise=False):
     """Single-query compatibility wrapper; use AssumptionSession to retain CNF."""
     with AssumptionSession(problem, seconds, seed, workers, should_stop, on_progress,
-                           reverse_support=reverse_support) as session:
+                           reverse_support=reverse_support,
+                           piece_channels=piece_channels, small_pairwise=small_pairwise) as session:
         return session.solve(assumptions)
 
 

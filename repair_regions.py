@@ -7,13 +7,16 @@ Failure of this restricted neighborhood says nothing about global feasibility.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
+from dataclasses import replace
+from types import MappingProxyType
 import itertools
 import math
 import random
 import threading
 import time
 
-from exact_model import constraint_edges, frame_ok, grid_edges
+from exact_model import constraint_edges, frame_ok, grid_edges, problem_hash
 from exact_optimize import evaluate_board
 
 MAX_REGION_CELLS = 64
@@ -296,3 +299,99 @@ def region_repair(problem, board, cells, seconds=.5, seed=0, should_stop=None):
     if status == cp_model.INFEASIBLE and not reason:
         return result('no_improvement_in_region')
     return result('timeout')
+
+
+class RegionRepairSession:
+    """Reuse completed CP-SAT absence proofs within one immutable problem.
+
+    A proof covers exactly a selected cell set, its physical piece pool, frozen
+    complement, legal domains, oriented clues and target. It is not evidence
+    against a different neighborhood or the full puzzle. This bounded cache is
+    memory-only and has no import/export path for externally claimed proofs.
+    """
+    def __init__(self, problem, capacity=256):
+        if type(capacity) is not int or not 1 <= capacity <= 4096:
+            raise ValueError('capacity must be an integer in 1..4096')
+        self._problem = replace(problem, faces=tuple(tuple(f) for f in problem.faces),
+                                domains=tuple(tuple(d) for d in problem.domains),
+                                fixed=MappingProxyType(dict(problem.fixed)),
+                                edges=None if problem.edges is None else tuple(tuple(e) for e in problem.edges))
+        self._problem_hash = problem_hash(self._problem)
+        self._capacity = capacity
+        self._negative = OrderedDict()
+        self.cache_hits = 0
+
+    @property
+    def problem(self):
+        return self._problem
+
+    @property
+    def cache_size(self):
+        return len(self._negative)
+
+    def _key(self, reference, cells, target):
+        selected = set(cells)
+        return (self._problem_hash, tuple(cells), tuple(sorted(reference[c] // 4 for c in cells)),
+                tuple((c, s) for c, s in enumerate(reference) if c not in selected), target)
+
+    def solve(self, board, cells, seconds=.5, seed=0, should_stop=None):
+        """Call region_repair or reuse its completed negative target certificate.
+
+        A hit performs no native solve and reports zero new branches/conflicts.
+        Stop and expired-budget requests take precedence over cache lookup.
+        Noncached results retain the existing region_repair result schema.
+        """
+        started = time.monotonic()
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not math.isfinite(seconds) or seconds < 0:
+            raise ValueError('seconds must be finite and nonnegative')
+        problem = self._problem
+        checked = _validate(problem, board, seed, should_stop)
+        reference = list(board)
+        try:
+            chosen = list(itertools.islice(cells, MAX_REGION_CELLS + 1))
+        except TypeError as exc:
+            raise ValueError('cells must be an iterable of distinct cell indices') from exc
+        if (len(chosen) > MAX_REGION_CELLS or any(type(c) is not int or not 0 <= c < problem.size**2 for c in chosen)
+                or len(set(chosen)) != len(chosen)):
+            raise ValueError('cells must contain at most 64 distinct valid indices')
+        if set(chosen) & problem.fixed.keys():
+            raise ValueError('Fixed oriented clue cells cannot be released')
+        chosen.sort()
+        maximum = checked['max_score']; target = min(maximum, checked['score'] + 1)
+        selected = set(chosen)
+        key = self._key(reference, chosen, target)
+        stopped = should_stop is not None and should_stop()
+        remaining = max(0., seconds - (time.monotonic() - started))
+        if not stopped and remaining > 0 and key in self._negative:
+            self._negative.move_to_end(key); self.cache_hits += 1
+            edges = grid_edges(problem.size)
+            fixed_score = sum(problem.faces[reference[a]][sa] == problem.faces[reference[b]][sb]
+                              for a, b, sa, sb in edges if a not in selected and b not in selected)
+            return {'board': reference.copy(), 'score': checked['score'], 'reference_score': checked['score'],
+                    'target_score': target, 'max_score': maximum, 'improved': False,
+                    'outcome': 'no_improvement_in_region', 'termination': 'no_improvement_in_region',
+                    'operator': 'connected-region', 'backend': 'cp-sat-region', 'workers': 1,
+                    'region_cells': chosen.copy(), 'neighborhood_size': len(chosen),
+                    'proof_scope': 'selected-cells-and-piece-pool-with-frozen-complement-only',
+                    'optimal': True, 'solver_status': 'INFEASIBLE', 'branches': 0, 'conflicts': 0,
+                    'table_rows': 0, 'changing_edges': sum(a in selected or b in selected for a, b, _, _ in edges),
+                    'fixed_score': fixed_score, 'phase': 'cached_proof',
+                    'elapsed_seconds': time.monotonic() - started, 'build_seconds': 0.,
+                    'cache_hit': True, 'proof_reused': True, 'proof_origin': 'completed-cp-sat-infeasible'}
+        result = region_repair(problem, reference, chosen, seconds=remaining, seed=seed,
+                               should_stop=(lambda: True) if stopped else should_stop)
+        # Only the native solver's completed INFEASIBLE outcome proves the
+        # strict-improvement target absent. In particular, UNKNOWN, stopped,
+        # timeout, empty-region and MODEL_INVALID are never negative proofs.
+        if (result.get('solver_status') == 'INFEASIBLE'
+                and result.get('termination') == 'no_improvement_in_region'
+                and result.get('score') == checked['score'] and not result.get('improved')
+                and result.get('target_score') == target and result.get('region_cells') == chosen
+                and result.get('proof_scope') == 'selected-cells-and-piece-pool-with-frozen-complement-only'):
+            actual = evaluate_board(problem, result['board'])
+            if actual['valid'] and actual['score'] == checked['score'] and result['board'] == reference:
+                self._negative[key] = True
+                self._negative.move_to_end(key)
+                while len(self._negative) > self._capacity:
+                    self._negative.popitem(last=False)
+        return result

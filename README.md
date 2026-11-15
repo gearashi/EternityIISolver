@@ -12,7 +12,11 @@ The [bounded sampler tests](docs/EXACT_SEARCH.md#measured-gpu-sampling-9-october
 
 BOINC-compatible worker development and the GPU DFS port remain **on hold**. Standalone CPU exact search does not execute assigned production tickets or submit results. The read-only workunit inspector remains available for examining saved inputs.
 
-**Library behavior retained from v0.2.2:** v0.2.2 replaces v0.2.1's optional background library downloads with a manual **Download and merge** button. Opening the app never starts a library download, and old automatic-download settings are ignored. Existing caches and search state are retained. Version 0.4.0 adds resumable structured repair and the experimental search methods described below; no better puzzle solution is claimed.
+**Library behavior retained from v0.2.2:** v0.2.2 replaces v0.2.1's optional background library downloads with a manual **Download and merge** button. Opening the app never starts a library download, and old automatic-download settings are ignored. Existing caches and search state are retained. Version 0.5.0 also includes local proof and repair commands and additional exact-search and repair policies.
+
+## Choosing a search
+
+For fewer tested placements, choose **Advanced search → DFS → Maximum filtering (experimental) → 1 worker**. On the hardest completed 9×9 benchmark from the official five-clue pieces, this used 6,941 decisions including probes and checkpoint reconstruction. Baseline used 20,327 and finished sooner. Every profile reconstructed Jef’s 466 arrangement on this known-feasible regional task. Exact search in the app asks for all 480 edges. [Settings, repair policies and original-board proofs](docs/SEARCH_SETTINGS.md)
 
 ## Download and start
 
@@ -31,7 +35,7 @@ DFS, SAT, and hybrid use one CPU worker. CP-SAT allows **1–4** workers. GPU re
 
 **Stop & save** requests a clean search stop and saves local state. It preserves the best board and exports; DFS, GPU repair, and the two structured matching engines also save resumable search state. Hybrid reuses its frozen hints and separate DFS frontier on resume. SAT/CP-SAT native search state is not checkpointed. The dashboard stays available afterward. **Download and merge** is a separate, manual library operation with its own cancellation control. Closing the browser leaves the search and any requested archive operation running while the local dashboard server stays open.
 
-Native archives include Python and application dependencies, but hardware drivers remain system supplied. Linux builds target the Ubuntu 22.04 runtime baseline and use the host system's `libstdc++` and `libgcc`, so newer GPU drivers load their matching C++ runtime. OpenCL support is conditional on the driver exposing a suitable GPU; normal search does not silently fall back to CPU OpenCL. AMD/Intel users should select **OpenCL** explicitly. Apple has [deprecated OpenCL](https://developer.apple.com/opencl/); macOS builds therefore depend on the runtime still exposed by the target Mac. The macOS archives are not Apple-notarized. They are built natively on macOS 15 Intel and macOS 14 ARM runners; older macOS versions are not certified.
+Native archives include Python and application dependencies, but hardware drivers remain system supplied. Linux builds target the Ubuntu 22.04 runtime baseline and use the host system's `libstdc++` and `libgcc`, so newer GPU drivers load their matching C++ runtime. OpenCL support is conditional on the driver exposing a suitable GPU; normal search does not silently fall back to CPU OpenCL. AMD/Intel users should select **OpenCL** explicitly. Apple has [deprecated OpenCL](https://developer.apple.com/opencl/); macOS builds therefore depend on the runtime still exposed by the target Mac. The macOS archives are not Apple-notarized. Both Mac archives are built and tested natively on macOS 15.
 
 ## Commands
 

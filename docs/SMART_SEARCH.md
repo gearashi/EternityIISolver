@@ -212,3 +212,7 @@ sampled parent pairs by cycle structure, and `adaptive_regions` learns from veri
 regional score gains per elapsed second. They preserve all puzzle constraints, but
 bounded real-board comparisons did not establish a score improvement. See the
 [experiment decisions and raw evidence](SEARCH_RESEARCH.md#five-repair-candidates-20-october-2026-040).
+
+## Structured repair policies
+
+Matching repair can reuse a completed failure proof when the puzzle rules, cells, physical piece pool, frozen complement and score target all match. Guided repair adds targeted changes across three to six tiles and periodic three-parent recombination. Choose the new rotation-aware option to allow supported rotations and reuse verified positive witnesses. Changing policies starts a distinct repair population. [Measured settings and commands](SEARCH_SETTINGS.md)

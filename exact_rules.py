@@ -24,10 +24,19 @@ DEFAULT_OPTIONS = {
 def normalize_options(options=None):
     if options is None:
         return DEFAULT_OPTIONS.copy()
-    if not isinstance(options, dict) or set(options) - set(DEFAULT_OPTIONS):
+    extensions = {'joint_colors': False, 'joint_width': 2, 'joint_work': 12000, 'joint_states': 5000, 'relational':False, 'relational_work':12000, 'relational_tuples':2000}
+    if not isinstance(options, dict) or set(options) - (set(DEFAULT_OPTIONS) | set(extensions)):
         raise ValueError('Invalid additional-rule options')
     result = DEFAULT_OPTIONS.copy()
+    extra = dict(extensions, **{k:v for k,v in options.items() if k in extensions})
+    if type(extra["relational"]) is not bool: raise ValueError("relational must be boolean")
+    if type(extra["joint_colors"]) is not bool: raise ValueError("joint_colors must be boolean")
+    for name,lo,hi in (("joint_width",2,3),("joint_work",0,1000000),("joint_states",1,100000),("relational_work",0,1000000),("relational_tuples",1,100000)):
+        if type(extra[name]) is not int or not lo<=extra[name]<=hi: raise ValueError("Invalid joint inventory limit")
+    if extra["joint_colors"]: result.update({k:v for k,v in extra.items() if k.startswith("joint_")})
+    if extra["relational"]: result.update({k:v for k,v in extra.items() if k.startswith("relational")})
     for key, value in options.items():
+        if key in extensions: continue
         default = DEFAULT_OPTIONS[key]
         if type(default) is bool:
             if type(value) is not bool:
@@ -97,6 +106,14 @@ class AdditionalRules:
             for suffix in ('checks', 'failures', 'skips', 'seconds'):
                 self.counters[name + '_' + suffix] = 0
         self.counters.update(block_pairs=0, balance_work=0, flow_edges=0)
+        if self.options.get('relational',False):
+            self.counters.update(relational_work=0,relational_setup_work=0,relational_checks=0,relational_failures=0,relational_skips=0,relational_seconds=0.)
+        self.joint = None
+        if self.options.get('joint_colors', False):
+            from joint_inventory import JointInventory
+            self.joint = JointInventory(problem)
+            self.counters.update(joint_setup_work=self.joint.setup_work, joint_work=0,
+                joint_checks=0, joint_failures=0, joint_skips=0, joint_seconds=0.)
 
     def pieces(self, domain):
         return (domain | domain >> 1 | domain >> 2 | domain >> 3) & self.piece_mask
@@ -135,6 +152,10 @@ class AdditionalRules:
                 ('blocks', self.options['blocks'], self._blocks),
                 ('flow', self.options['color_flow'] and identities and self.invariant, self._flow),
             )
+            if self.options.get('relational',False):
+                steps += (('relational',True,self._relational),)
+            if self.joint is not None:
+                steps += (('joint', identities, self._joint),)
             for name, enabled, method in steps:
                 self.check()
                 if not enabled:
@@ -153,6 +174,35 @@ class AdditionalRules:
             return True, changed
         finally:
             self.counters['seconds'] += time.perf_counter() - started
+
+    def _relational(self, domains, changed):
+        from relational_regions import propagate
+        def stopped():
+            self.check()
+            return False
+        answer=propagate(self.problem,domains,max_work=self.options['relational_work'],
+                         max_tuples=self.options['relational_tuples'],should_stop=stopped)
+        self.counters['relational_work']+=answer['work']
+        self.counters['relational_setup_work']+=answer['setup_state_visits']
+        if not answer['complete']:
+            self.counters['relational_skips']+=1
+            return True
+        if not answer['consistent']:return False
+        for cell,keep in enumerate(answer['domains']):
+            if not self._reduce(domains,cell,keep,changed):return False
+        return True
+
+    def _joint(self, domains, changed):
+        def check():
+            self.check()
+            return False
+        result=self.joint.check(domains,width=self.options['joint_width'],max_work=self.options['joint_work'],
+                                max_states=self.options['joint_states'],should_stop=check)
+        self.counters['joint_work']+=result['work']
+        if not result['complete']:
+            self.counters['joint_skips']+=1
+            return True
+        return result['consistent']
 
     def _hall(self, domains, changed):
         groups = {}

@@ -56,7 +56,9 @@ class ExactWorkerTests(unittest.TestCase):
             self.assertFalse(self.read()['exact_counters_available'])
             kwargs['on_progress']({'phase': 'searching', 'branches': 10, 'conflicts': 3, 'max_depth': 5})
             return self.timeout()
-        self.assertEqual(self.run_fake(solver, engine='sat', seconds=2, seed=123), 0)
+        # This checks budget forwarding, not disk initialization speed.
+        with patch.object(exact_worker.time, 'monotonic', return_value=100.):
+            self.assertEqual(self.run_fake(solver, engine='sat', seconds=2, seed=123), 0)
         self.assertEqual(seen['problem'].size, 16)
         self.assertEqual(seen['problem'].fixed, self.bundle.fixed_clues)
         self.assertEqual(len(constraint_edges(seen['problem'])), 480)
