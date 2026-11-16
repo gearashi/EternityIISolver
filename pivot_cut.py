@@ -6,18 +6,22 @@ class _WorkLimit(Exception):
     pass
 
 
-def prove_pivot(problem, domains, target, *, edges, max_work=1_000_000, check=None):
+def prove_pivot(problem, domains, target, *, edges, max_work=1_000_000, check=None, one_sided=False, work_counts=None):
     """Return a cut only if the selected states imply each other's negation.
 
     Binary cells contribute complementary literals. A forbidden pair of
     oriented states gives two implications. We omit wider and singleton
     cells, which can only weaken the relaxation. The caller supplies the
     current, post-propagation masks and the task's actual required edges.
+    In one-sided mode an implication from one state to its own complement
+    rules out just that orientation. Only completed proofs publish exclusions.
     The outer search's interrupt exception passes through unchanged.
     """
     if type(max_work) is not int or max_work < 0:
         raise ValueError('Expected a nonnegative integer work cap')
-    counts = Counter()
+    if work_counts is not None and (not isinstance(work_counts, Counter) or work_counts):
+        raise ValueError('Expected a fresh counter for this proof')
+    counts = Counter() if work_counts is None else work_counts
     work = 0
     next_poll = 128
 
@@ -31,10 +35,13 @@ def prove_pivot(problem, domains, target, *, edges, max_work=1_000_000, check=No
             check()
             next_poll = work + 128
 
-    def finish(outcome):
+    def finish(outcome, excluded_mask=0):
         if check is not None:
             check()
-        return dict(outcome=outcome, work=work, counts=dict(counts))
+        result = dict(outcome=outcome, work=work, counts=dict(counts))
+        if one_sided:
+            result['excluded_mask'] = excluded_mask
+        return result
 
     try:
         if check is not None:
@@ -91,14 +98,16 @@ def prove_pivot(problem, domains, target, *, edges, max_work=1_000_000, check=No
                     if problem.faces[state][sa] != problem.faces[other][sb]:
                         forbid(la+i, lb+j)
 
-        def implies(start, goal):
+        def implies(start, goal, side):
+            visits = side + '_reach_visits' if one_sided else 'reach_visits'
+            edges_tested = side + '_reach_edges' if one_sided else 'reach_edges'
             visited = {start}
             stack = [start]
             while stack:
-                charge('reach_visits')
+                charge(visits)
                 current = stack.pop()
                 for other in graph[current]:
-                    charge('reach_edges')
+                    charge(edges_tested)
                     if other == goal:
                         return True
                     if other not in visited:
@@ -106,9 +115,15 @@ def prove_pivot(problem, domains, target, *, edges, max_work=1_000_000, check=No
                         stack.append(other)
             return False
 
-        pivot = rows[target][2]
-        if implies(pivot, pivot ^ 1) and implies(pivot ^ 1, pivot):
-            return finish('contradiction')
+        low_state, high_state, pivot = rows[target]
+        low_fails = implies(pivot, pivot ^ 1, 'lower')
+        # The released rule can stop after a failed first proof. One-sided
+        # dispatch must also consider the opposite orientation.
+        high_fails = (low_fails or one_sided) and implies(pivot ^ 1, pivot, 'upper')
+        if low_fails and high_fails:
+            return finish('contradiction', domains[target])
+        if one_sided and (low_fails or high_fails):
+            return finish('one_sided', 1 << (low_state if low_fails else high_state))
         return finish('unchanged')
     except _WorkLimit:
         return finish('work_limit')

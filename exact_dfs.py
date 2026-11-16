@@ -34,7 +34,7 @@ def normalize_options(options=None):
     if options is None:
         options = {}
     extensions = {'component_completion': False, 'component_work': 20000, 'component_max_cells': 24}
-    if not isinstance(options, dict) or set(options) - (set(DEFAULT_OPTIONS) | set(extensions) | {'pivot_cut_v1'}):
+    if not isinstance(options, dict) or set(options) - (set(DEFAULT_OPTIONS) | set(extensions) | {'pivot_cut_v1', 'pivot_dispatch_v1'}):
         raise ValueError('Unknown DFS options or invalid options object')
     extra = dict(extensions, **{k:v for k,v in options.items() if k in extensions})
     if type(extra["component_completion"]) is not bool: raise ValueError("component_completion must be boolean")
@@ -60,6 +60,13 @@ def normalize_options(options=None):
         if result != normalize_options(dfs_profile_options('full')):
             raise ValueError('Pivot proofs require the Maximum filtering settings')
         result['pivot_cut_v1'] = True
+    dispatch_enabled = options.get('pivot_dispatch_v1', False)
+    if type(dispatch_enabled) is not bool:
+        raise ValueError('pivot_dispatch_v1 must be boolean')
+    if dispatch_enabled:
+        if not pivot_enabled:
+            raise ValueError('One-sided dispatch requires the full-pivot settings')
+        result['pivot_dispatch_v1'] = True
     return result
 
 
@@ -230,6 +237,7 @@ class _Search:
             setattr(self, key, 0)
         self.options = normalize_options(options)
         self.pivot_enabled = self.options.get('pivot_cut_v1', False)
+        self.pivot_dispatch = self.options.get('pivot_dispatch_v1', False)
         if self.pivot_enabled and (type(self) is not _Search or hints):
             raise ValueError('Pivot proofs require standard DFS without ordering hints')
         self.policy = _new_policy()
@@ -819,6 +827,11 @@ class _Search:
                     selected = ('edge', edge, choices)
         return selected
 
+    def skip_proved_choice(self, frame, choice):
+        # Commit only this cursor. The complete original ordered alternatives
+        # stay in the checkpoint, including the omitted orientation.
+        frame['next'] += 1
+
     def visit(self, domains):
         if self.input_checkpoint is not None:
             self.restore(domains)
@@ -881,8 +894,13 @@ class _Search:
                         self.stack.pop()
                         continue
                 kind, cell, candidates = self.choose_partition(current)
+                excluded = 0
                 if self.pivot_enabled and depth > 8 and kind == 'cell' and len(candidates) == 2:
-                    proof = prove_pivot(self.problem, current, cell, edges=self.edges, check=self.check)
+                    if self.pivot_dispatch:
+                        proof = prove_pivot(self.problem, current, cell, edges=self.edges, check=self.check, one_sided=True)
+                        excluded = proof['excluded_mask']
+                    else:
+                        proof = prove_pivot(self.problem, current, cell, edges=self.edges, check=self.check)
                     if proof['outcome'] == 'contradiction':
                         # Both choices fail ordinary propagation. Commit the
                         # parent's real ordering draw before skipping them.
@@ -895,11 +913,26 @@ class _Search:
                 frame = {'phase': 'branch', 'domains': current, 'matching': matching,
                          'kind': kind, 'cell': cell, 'candidates': candidates, 'next': 0,
                          'adaptive_before': adaptive_before}
+                if self.pivot_dispatch:
+                    frame['pivot_excluded'] = excluded
                 self.stack[-1] = frame
             if frame['next'] == len(frame['candidates']):
                 self.stack.pop()
                 continue
             choice = frame['candidates'][frame['next']]
+            if self.pivot_dispatch:
+                if 'pivot_excluded' not in frame:
+                    # Restored frames own only their remaining alternatives.
+                    # Rebuild the scratch proof without reordering the list.
+                    excluded = 0
+                    if depth > 8 and frame['kind'] == 'cell' and len(frame['candidates']) == 2:
+                        proof = prove_pivot(self.problem, frame['domains'], frame['cell'],
+                                            edges=self.edges, check=self.check, one_sided=True)
+                        excluded = proof['excluded_mask']
+                    frame['pivot_excluded'] = excluded
+                if frame['pivot_excluded'] & (1 << choice):
+                    self.skip_proved_choice(frame, choice)
+                    continue
             frame['next'] += 1
             self.branches += 1
             key = frame['kind'] + '_branches'

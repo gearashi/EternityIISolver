@@ -23,8 +23,10 @@ from validator import validate_board
 
 def profile_fingerprint(profile):
     options = normalize_options(dfs_profile_options(profile))
-    if profile == 'full-pivot' and options.get('pivot_cut_v1') is not True:
+    if profile in ('full-pivot','full-dispatch') and options.get('pivot_cut_v1') is not True:
         raise AssertionError('The expected opt-in profile has no pivot proof setting')
+    if bool(options.get('pivot_dispatch_v1')) != (profile == 'full-dispatch'):
+        raise AssertionError('Unexpected one-sided dispatch setting')
     payload = {'options': options, 'rules_version': RULES_VERSION if options['extra_rules'] is not None else None}
     encoded = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('ascii')
     return hashlib.sha256(encoded).hexdigest()
@@ -126,27 +128,29 @@ def main():
                 # starting a distinct profile in this temporary home.
                 default_checkpoint = json.loads(checkpoint.read_text(encoding='utf-8'))
                 assert default_checkpoint['options_hash'] == profile_fingerprint('baseline')
-                request('/start', {'method': 'exact', 'exact_engine': 'dfs', 'workers': 1,
-                                   'seed': 20261007, 'seconds': 1.5,
-                                   'pruning': 'full-pivot', 'fresh_exact': True})
-                pivot = wait_for(lambda s: belongs(s) and s.get('can_start')
-                                 and s.get('state') == 'finished_bounded_run'
-                                 and s.get('pruning') == 'full-pivot')
-                assert pivot.get('exact_outcome') == 'timeout' and pivot.get('resumed') is False, pivot
-                assert pivot.get('method') == 'exact' and pivot.get('exact_engine') == 'dfs', pivot
-                assert pivot.get('workers') == 1 and pivot.get('external_network_enabled') is False, pivot
-                enabled = json.loads(checkpoint.read_text(encoding='utf-8'))
-                enabled_hash = profile_fingerprint('full-pivot')
-                assert enabled_hash not in (default_checkpoint['options_hash'], profile_fingerprint('full'))
-                assert enabled['options_hash'] == enabled_hash
-                assert enabled['problem_hash'] == default_checkpoint['problem_hash']
-                assert enabled['seed'] == default_checkpoint['seed'] == 20261007
-                archived = list(checkpoint.parent.glob('exact-dfs-checkpoint.archived-*.json'))
-                assert len(archived) == 1 and hashlib.sha256(archived[0].read_bytes()).hexdigest() == report['checkpoint_sha256']
-                report['pivot_profile'] = {'pruning': pivot['pruning'], 'exact_outcome': pivot['exact_outcome'],
-                                           'resumed': pivot['resumed'], 'workers': pivot['workers'],
-                                           'seconds_limit': 1.5, 'options_hash': enabled_hash,
-                                           'default_checkpoint_archived': True}
+                known_hashes = {default_checkpoint['options_hash'], profile_fingerprint('full')}
+                for profile, receipt_key in (('full-pivot', 'pivot_profile'), ('full-dispatch', 'dispatch_profile')):
+                    prior_bytes = checkpoint.read_bytes()
+                    previous_archives = set(checkpoint.parent.glob('exact-dfs-checkpoint.archived-*.json'))
+                    request('/start', {'method': 'exact', 'exact_engine': 'dfs', 'workers': 1,
+                                       'seed': 20261007, 'seconds': 1.5, 'pruning': profile, 'fresh_exact': True})
+                    end = wait_for(lambda s: belongs(s) and s.get('can_start')
+                                   and s.get('state') == 'finished_bounded_run' and s.get('pruning') == profile)
+                    assert end.get('exact_outcome') == 'timeout' and end.get('resumed') is False, end
+                    assert end.get('method') == 'exact' and end.get('exact_engine') == 'dfs', end
+                    assert end.get('workers') == 1 and end.get('external_network_enabled') is False, end
+                    enabled = json.loads(checkpoint.read_text(encoding='utf-8'))
+                    enabled_hash = profile_fingerprint(profile)
+                    assert enabled_hash not in known_hashes and enabled['options_hash'] == enabled_hash
+                    known_hashes.add(enabled_hash)
+                    assert enabled['problem_hash'] == default_checkpoint['problem_hash']
+                    assert enabled['seed'] == default_checkpoint['seed'] == 20261007
+                    archived = set(checkpoint.parent.glob('exact-dfs-checkpoint.archived-*.json')) - previous_archives
+                    assert len(archived) == 1 and archived.pop().read_bytes() == prior_bytes
+                    archive_field = 'default_checkpoint_archived' if profile == 'full-pivot' else 'pivot_checkpoint_archived'
+                    report[receipt_key] = {'pruning': end['pruning'], 'exact_outcome': end['exact_outcome'],
+                                           'resumed': end['resumed'], 'workers': end['workers'],
+                                           'seconds_limit': 1.5, 'options_hash': enabled_hash, archive_field: True}
             except BaseException as exc:
                 failure=exc
                 failure_traceback=traceback.format_exc()

@@ -99,7 +99,7 @@ const fixture=JSON.parse(process.argv[2]),calls=[];let resolveFetch;
 const context=vm.createContext({document:{getElementById:id=>elements.get(id),querySelectorAll:()=>[]},localStorage:{getItem:()=>null},setInterval(){},AbortSignal:{timeout:()=>undefined},fixture,fetch:(url,options)=>{calls.push({url,...options});return new Promise(resolve=>{resolveFetch=resolve;});}});
 vm.runInContext(source.replace('refresh();setInterval(refresh,3000);',''),context);
 vm.runInContext('connected=fixture.live;renderStatus(fixture.status,fixture.live);',context);
-function snapshot(){const result={};for(const [id,node] of elements)result[id]={text:node.textContent,disabled:node.disabled,hidden:node.hidden,width:node.style.width};return result;}
+function snapshot(){const result={};for(const [id,node] of elements)result[id]={text:node.textContent,value:node.value,disabled:node.disabled,hidden:node.hidden,width:node.style.width};return result;}
 (async()=>{const result={rendered:snapshot()};if(fixture.event){
  vm.runInContext('refresh=async()=>{};',context);
  const pending=elements.get(fixture.event.cancel?'archiveCancel':'archiveStart').listeners.click();
@@ -115,18 +115,17 @@ function snapshot(){const result={};for(const [id,node] of elements)result[id]={
         return rendered if event else rendered['rendered']
 
     def test_pivot_proof_option_is_available_only_for_standard_dfs(self):
-        for method, engine, enabled in (
-            ('exact', 'dfs', True),
-            ('exact', 'hybrid', False),
-            ('exact', 'partitioned', False),
-            ('gpu', 'dfs', False),
-        ):
-            with self.subTest(method=method, engine=engine):
-                status = self.server.status()
-                status['settings'] = dict(status.get('settings') or {},
-                                          method=method, exact_engine=engine, pruning='full-pivot')
-                rendered = self.render_status(status)
-                self.assertEqual(rendered['pivotProfileOption']['disabled'], not enabled)
+        for profile,option_id in (('full-pivot','pivotProfileOption'),('full-dispatch','dispatchProfileOption')):
+            for method,engine,enabled in (
+                ('exact','dfs',True), ('exact','hybrid',False),
+                ('exact','partitioned',False), ('gpu','dfs',False),
+            ):
+                with self.subTest(profile=profile, method=method, engine=engine):
+                    status = self.server.status()
+                    status['settings'] = dict(status.get('settings') or {}, method=method, exact_engine=engine, pruning=profile)
+                    rendered = self.render_status(status)
+                    self.assertEqual(rendered[option_id]['disabled'], not enabled)
+                    self.assertEqual(rendered['pruningChoice']['value'], profile if enabled else 'full')
 
     def test_boot_shows_cache_without_starting_archive_or_search(self):
         self.assertEqual(len(self.created), 1); self.assertEqual(self.created[0].starts, 0)

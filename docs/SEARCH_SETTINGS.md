@@ -4,7 +4,13 @@ The release includes a disposition for each of the 67 proposals. [Improvement de
 
 ## Exact search for 480
 
-For a run that prioritizes fewer decisions, select **Advanced search → DFS → Maximum filtering + pivot proof (experimental) → 1 worker**. From a command prompt in a native build, use the following command.
+For fewer placement attempts on the tested regions, select **Advanced search → DFS → Maximum filtering + single-placement proofs (experimental) → 1 worker**.
+
+```text
+EternityIISolver start --method exact --exact-engine dfs --pruning full-dispatch --workers 1
+```
+
+The earlier **Maximum filtering + pivot proof (experimental)** profile is available with this command.
 
 ```text
 EternityIISolver start --method exact --exact-engine dfs --pruning full-pivot --workers 1
@@ -13,6 +19,23 @@ EternityIISolver start --method exact --exact-engine dfs --pruning full-pivot --
 When switching from a saved DFS profile, select **Restart saved search** once so the app archives the old frontier. Starting again with the same profile and seed resumes its own compatible checkpoint.
 
 The DFS benchmark used the 256 official pieces, the five oriented clues, the Jef 466 reference and seed 20261007. A case freed a square 5×5, 7×7 or 9×9 corner. It required the originally matched edges in the declared scope so that a completion was known to exist. Each result passed a separate check of all physical pieces, fixed states, frame and selected edges.
+
+### Skipping one impossible orientation
+
+When DFS chooses a cell with two remaining options, each option specifies a physical piece and a rotation. Trying one can force other placements through shared edge colors and the requirement to use each piece once. If those placements require the original cell to take its other option, DFS has proved the starting choice impossible. The single-placement profile skips that choice when its turn comes in the original branch order. DFS charges the usual placement if it tries the other option. The profile retains the existing rule for cases where both choices are impossible.
+
+| Regional search | Pivot proof | Single-placement proofs |
+| --- | ---: | ---: |
+| 24 regions on the five-clue 466 reference, seed 20261007 | 6,892 | 6,868 |
+| Southeast 9×9 within those 24 | 6,882 | 6,858 |
+| Same southeast 9×9 and same parent, seed 20261123 | 6,829 | 6,809 |
+| Separate regions from two 465 parents | 4 and 0 | 4 and 0 |
+
+The table counts ordinary branch placements and lookahead trials. Across the 24 regions, ordinary placements fell from 6,288 to 6,264, and both profiles used 604 lookahead trials. All 24 first boards and the first boards in the repeat-seed and two 465-parent tests matched. The two southeast 9×9 runs returned boards scoring 466/480 against the full puzzle. The number of attempts needed to match all 480 edges remains unknown.
+
+A fresh southeast 9×9 test used a third 465-point parent and seed 20261129. Both profiles returned the same board after 1 attempt. This case had no single-placement skips.
+
+With all 480 edges required, both profiles reached the same checkpoint after 111 branch placements and 17 lookahead trials. The new rule skipped zero placements in that opening segment.
 
 ### Pruning both placements of a cell
 
