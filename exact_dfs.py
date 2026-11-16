@@ -16,6 +16,7 @@ import time
 
 from dfs_profiles import dfs_profile_options
 from exact_model import check_solution, constraint_edges, problem_hash
+from neighbor_hall import hall_proves_choice
 from pivot_cut import prove_pivot
 from neighbor_cut import build_neighbor_graph, query_neighbor_graph
 
@@ -35,7 +36,7 @@ def normalize_options(options=None):
     if options is None:
         options = {}
     extensions = {'component_completion': False, 'component_work': 20000, 'component_max_cells': 24}
-    if not isinstance(options, dict) or set(options) - (set(DEFAULT_OPTIONS) | set(extensions) | {'pivot_cut_v1', 'pivot_dispatch_v1', 'neighbor_dispatch_v1'}):
+    if not isinstance(options, dict) or set(options) - (set(DEFAULT_OPTIONS) | set(extensions) | {'pivot_cut_v1', 'pivot_dispatch_v1', 'neighbor_dispatch_v1', 'neighbor_hall_v1'}):
         raise ValueError('Unknown DFS options or invalid options object')
     extra = dict(extensions, **{k:v for k,v in options.items() if k in extensions})
     if type(extra["component_completion"]) is not bool: raise ValueError("component_completion must be boolean")
@@ -75,6 +76,13 @@ def normalize_options(options=None):
         if not dispatch_enabled:
             raise ValueError('Forced-neighbor dispatch requires the full-dispatch settings')
         result['neighbor_dispatch_v1'] = True
+    hall_enabled = options.get('neighbor_hall_v1', False)
+    if type(hall_enabled) is not bool:
+        raise ValueError('neighbor_hall_v1 must be boolean')
+    if hall_enabled:
+        if not neighbor_enabled:
+            raise ValueError('Neighbor Hall dispatch requires the full-neighbor settings')
+        result['neighbor_hall_v1'] = True
     return result
 
 
@@ -247,6 +255,10 @@ class _Search:
         self.pivot_enabled = self.options.get('pivot_cut_v1', False)
         self.pivot_dispatch = self.options.get('pivot_dispatch_v1', False)
         self.neighbor_dispatch = self.options.get('neighbor_dispatch_v1', False)
+        self.hall_dispatch = self.options.get('neighbor_hall_v1', False)
+        if self.hall_dispatch:
+            self._hall_domains = None
+            self._hall_buckets = {}
         if self.pivot_enabled and (type(self) is not _Search or hints):
             raise ValueError('Pivot proofs require standard DFS without ordering hints')
         self.policy = _new_policy()
@@ -856,6 +868,9 @@ class _Search:
         # state is legal at another destination of this piece.
         frame['next'] += 1
 
+    def skip_hall_choice(self, frame, choice):
+        frame['next'] += 1
+
     def visit(self, domains):
         if self.input_checkpoint is not None:
             self.restore(domains)
@@ -970,6 +985,9 @@ class _Search:
                 if frame['pivot_excluded'] & (1 << choice):
                     self.skip_proved_choice(frame, choice)
                     continue
+            if self.hall_dispatch and hall_proves_choice(self, frame, choice):
+                self.skip_hall_choice(frame, choice)
+                continue
             frame['next'] += 1
             self.branches += 1
             key = frame['kind'] + '_branches'

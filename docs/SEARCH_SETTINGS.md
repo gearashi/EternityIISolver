@@ -4,7 +4,13 @@ The release includes a disposition for each of the 67 proposals. [Improvement de
 
 ## Exact search for 480
 
-For the fewest placement attempts observed on these five-clue regional tests, select **Advanced search → DFS → Maximum filtering + forced-neighbor proofs (experimental) → 1 worker**.
+To run the single-worker DFS profile that used fewer placement attempts than forced-neighbor proofs on the regional tests below, select **Advanced search → DFS → Maximum filtering + neighbor capacity proofs (experimental) → 1 worker**.
+
+```text
+EternityIISolver start --method exact --exact-engine dfs --pruning full-neighbor-hall --workers 1
+```
+
+To run the preceding forced-neighbor profile, use the following command.
 
 ```text
 EternityIISolver start --method exact --exact-engine dfs --pruning full-neighbor --workers 1
@@ -25,6 +31,19 @@ EternityIISolver start --method exact --exact-engine dfs --pruning full-pivot --
 When switching from a saved DFS profile, select **Restart saved search** once so the app archives the old frontier. Starting again with the same profile and seed resumes its own compatible checkpoint.
 
 The DFS benchmark used the 256 official pieces, the five oriented clues, the Jef 466 reference and seed 20261007. A case freed a square 5×5, 7×7 or 9×9 corner. It required the originally matched edges in the declared scope so that a completion was known to exist. Each result passed a separate check of all physical pieces, fixed states, frame and selected edges.
+
+### Checking capacity at required neighbors
+
+A proposed piece orientation can give several required neighbors the same short list of possible physical tiles. If three neighbors must use distinct tiles and only two IDs fit across all three, the orientation is impossible. DFS checks the actual rotations allowed at each neighbor. It skips a piece location only if all its legal orientations fail. It skips an edge color only if every legal orientation showing that color fails at one endpoint. Other choices retain their original order.
+
+| Regional search | Forced-neighbor proofs | Neighbor capacity proofs |
+| --- | ---: | ---: |
+| 24 regions on the Jef 466 board, seed 20261007 | 6,867 | 6,857 |
+| Same southeast 9×9 region, seed 20261123 | 6,808 | 6,796 |
+| Independent 9×9 window on a 465 board, seed 20261130 | 13,337 | 13,325 |
+| Three other regional controls | 4, 0, 1 | 4, 0, 1 |
+
+Counts include DFS choices, lookahead trials and any placements used to reconstruct a saved frontier. The 29 paired runs returned the same first board in each pair. The proofs avoided 34 attempts across 24 distinct combinations of parent domains and excluded choices. The second seed revisits the same parent board and geometry. The independent 9×9 window uses a separate 465/480 arrangement and 133 required internal edges. These measurements compare placement counts on those regional tasks. Time to solve the full board remains unknown.
 
 ### Proving a piece cannot occupy a location
 

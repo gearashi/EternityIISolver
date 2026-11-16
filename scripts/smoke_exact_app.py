@@ -23,12 +23,14 @@ from validator import validate_board
 
 def profile_fingerprint(profile):
     options = normalize_options(dfs_profile_options(profile))
-    if profile in ('full-pivot','full-dispatch','full-neighbor') and options.get('pivot_cut_v1') is not True:
+    if profile in ('full-pivot','full-dispatch','full-neighbor','full-neighbor-hall') and options.get('pivot_cut_v1') is not True:
         raise AssertionError('The expected opt-in profile has no pivot proof setting')
-    if bool(options.get('pivot_dispatch_v1')) != (profile in ('full-dispatch','full-neighbor')):
+    if bool(options.get('pivot_dispatch_v1')) != (profile in ('full-dispatch','full-neighbor','full-neighbor-hall')):
         raise AssertionError('Unexpected one-sided dispatch setting')
-    if bool(options.get('neighbor_dispatch_v1')) != (profile == 'full-neighbor'):
+    if bool(options.get('neighbor_dispatch_v1')) != (profile in ('full-neighbor','full-neighbor-hall')):
         raise AssertionError('Unexpected forced-neighbor proof setting')
+    if bool(options.get('neighbor_hall_v1')) != (profile == 'full-neighbor-hall'):
+        raise AssertionError('Unexpected neighbor capacity proofs setting')
     payload = {'options': options, 'rules_version': RULES_VERSION if options['extra_rules'] is not None else None}
     encoded = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('ascii')
     return hashlib.sha256(encoded).hexdigest()
@@ -133,7 +135,8 @@ def main():
                 known_hashes = {default_checkpoint['options_hash'], profile_fingerprint('full')}
                 profiles = (('full-pivot', 'pivot_profile', 'default_checkpoint_archived'),
                             ('full-dispatch', 'dispatch_profile', 'pivot_checkpoint_archived'),
-                            ('full-neighbor', 'neighbor_profile', 'dispatch_checkpoint_archived'))
+                            ('full-neighbor', 'neighbor_profile', 'dispatch_checkpoint_archived'),
+                            ('full-neighbor-hall', 'neighbor_hall_profile', 'neighbor_checkpoint_archived'))
                 for profile, receipt_key, archive_field in profiles:
                     prior_bytes = checkpoint.read_bytes()
                     previous_archives = set(checkpoint.parent.glob('exact-dfs-checkpoint.archived-*.json'))

@@ -146,7 +146,7 @@ class ProfileTests(unittest.TestCase):
             dfs.normalize_options(dict(pivot_cut_v1=True))
         for profile in PRUNING_PROFILES:
             self.assertEqual(dfs.normalize_options(dfs_profile_options(profile)).get('pivot_cut_v1',False),
-                             profile in ('full-pivot','full-dispatch','full-neighbor'))
+                             profile in ('full-pivot','full-dispatch','full-neighbor','full-neighbor-hall'))
 
     def test_dashboard_launcher_worker_and_unsupported_modes(self):
         command=['--method','exact','--exact-engine','dfs','--pruning','full-pivot']

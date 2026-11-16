@@ -16,7 +16,7 @@ BOINC-compatible worker development and the GPU DFS port remain **on hold**. Sta
 
 ## Choosing a search
 
-For the fewest placement attempts observed on these five-clue regional tests, select **Advanced search → DFS → Maximum filtering + forced-neighbor proofs (experimental) → 1 worker**. Across 24 regions on the 466 reference board, this profile used 6,867 placement attempts. The previous profile used 6,868. [Settings and benchmark results](docs/SEARCH_SETTINGS.md)
+To use the neighbor capacity rule that reduced placement attempts in the regional comparison, select **Advanced search → DFS → Maximum filtering + neighbor capacity proofs (experimental) → 1 worker**. Across 24 regions on the 466 reference board, this profile used 6,857 attempts, compared with 6,867 for forced-neighbor proofs. On an independent window of a 465 board, the counts were 13,325 and 13,337. [Search settings and benchmark results](docs/SEARCH_SETTINGS.md)
 
 The earlier **Maximum filtering + single-placement proofs (experimental)** profile is also available. Across 24 regions on the 466 reference board, this profile used 6,868 placement attempts, compared with 6,892 for the two-placement pivot proof. Every region returned the same first board under both profiles.
 

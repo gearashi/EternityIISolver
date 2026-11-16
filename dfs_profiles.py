@@ -1,6 +1,6 @@
 """Named pruning profiles shared by local DFS, the CLI and the dashboard."""
 
-PRUNING_PROFILES = ('baseline', 'strong', 'full', 'full-pivot', 'full-dispatch', 'full-neighbor', 'adaptive', 'components', 'joint', 'relational')
+PRUNING_PROFILES = ('baseline', 'strong', 'full', 'full-pivot', 'full-dispatch', 'full-neighbor', 'full-neighbor-hall', 'adaptive', 'components', 'joint', 'relational')
 
 
 def dfs_profile_options(profile):
@@ -17,19 +17,21 @@ def dfs_profile_options(profile):
         return {'extra_rules': {'relational': True}}
     options = dict(gac=True, independent_completion=True, dual_branch=True,
                    edge_branch=True, extra_rules=None)
-    if profile in ('full', 'full-pivot', 'full-dispatch', 'full-neighbor', 'adaptive'):
+    if profile in ('full', 'full-pivot', 'full-dispatch', 'full-neighbor', 'full-neighbor-hall', 'adaptive'):
         options.update(probe=True, extra_rules={})
-    if profile in ('full-pivot', 'full-dispatch', 'full-neighbor'):
+    if profile in ('full-pivot', 'full-dispatch', 'full-neighbor', 'full-neighbor-hall'):
         options['pivot_cut_v1'] = True
-    if profile in ('full-dispatch', 'full-neighbor'):
+    if profile in ('full-dispatch', 'full-neighbor', 'full-neighbor-hall'):
         options['pivot_dispatch_v1'] = True
-    if profile == 'full-neighbor':
+    if profile in ('full-neighbor', 'full-neighbor-hall'):
         options['neighbor_dispatch_v1'] = True
+    if profile == 'full-neighbor-hall':
+        options['neighbor_hall_v1'] = True
     if profile == 'adaptive':
         options['adaptive'] = True
     return options
 
 
 def validate_pivot_engine(profile, engine, workers):
-    if profile in ('full-pivot', 'full-dispatch', 'full-neighbor') and (engine != 'dfs' or workers != 1):
+    if profile in ('full-pivot', 'full-dispatch', 'full-neighbor', 'full-neighbor-hall') and (engine != 'dfs' or workers != 1):
         raise ValueError('Full filtering with a pivot proof requires standard DFS with one CPU worker')
