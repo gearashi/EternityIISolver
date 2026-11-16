@@ -17,6 +17,7 @@ import time
 from dfs_profiles import dfs_profile_options
 from exact_model import check_solution, constraint_edges, problem_hash
 from pivot_cut import prove_pivot
+from neighbor_cut import build_neighbor_graph, query_neighbor_graph
 
 CHECKPOINT_VERSION = 4
 ORDERING_VERSION = 'mrv-degree-lcv-hint-adaptive-v3'
@@ -34,7 +35,7 @@ def normalize_options(options=None):
     if options is None:
         options = {}
     extensions = {'component_completion': False, 'component_work': 20000, 'component_max_cells': 24}
-    if not isinstance(options, dict) or set(options) - (set(DEFAULT_OPTIONS) | set(extensions) | {'pivot_cut_v1', 'pivot_dispatch_v1'}):
+    if not isinstance(options, dict) or set(options) - (set(DEFAULT_OPTIONS) | set(extensions) | {'pivot_cut_v1', 'pivot_dispatch_v1', 'neighbor_dispatch_v1'}):
         raise ValueError('Unknown DFS options or invalid options object')
     extra = dict(extensions, **{k:v for k,v in options.items() if k in extensions})
     if type(extra["component_completion"]) is not bool: raise ValueError("component_completion must be boolean")
@@ -67,6 +68,13 @@ def normalize_options(options=None):
         if not pivot_enabled:
             raise ValueError('One-sided dispatch requires the full-pivot settings')
         result['pivot_dispatch_v1'] = True
+    neighbor_enabled = options.get('neighbor_dispatch_v1', False)
+    if type(neighbor_enabled) is not bool:
+        raise ValueError('neighbor_dispatch_v1 must be boolean')
+    if neighbor_enabled:
+        if not dispatch_enabled:
+            raise ValueError('Forced-neighbor dispatch requires the full-dispatch settings')
+        result['neighbor_dispatch_v1'] = True
     return result
 
 
@@ -238,6 +246,7 @@ class _Search:
         self.options = normalize_options(options)
         self.pivot_enabled = self.options.get('pivot_cut_v1', False)
         self.pivot_dispatch = self.options.get('pivot_dispatch_v1', False)
+        self.neighbor_dispatch = self.options.get('neighbor_dispatch_v1', False)
         if self.pivot_enabled and (type(self) is not _Search or hints):
             raise ValueError('Pivot proofs require standard DFS without ordering hints')
         self.policy = _new_policy()
@@ -832,6 +841,21 @@ class _Search:
         # stay in the checkpoint, including the omitted orientation.
         frame['next'] += 1
 
+    def neighbor_graph_for_frame(self, frame, depth):
+        kind = frame['kind']
+        width = len(frame['candidates'])
+        if depth <= 8 or not ((kind == 'piece' and width in (3, 4)) or (kind == 'cell' and width == 4)):
+            return None
+        if 'neighbor_graph' not in frame:
+            frame['neighbor_graph'] = build_neighbor_graph(
+                self.faces, self.colors, self.neighbors, frame['domains'], self.check)
+        return frame['neighbor_graph']
+
+    def skip_neighbor_choice(self, frame, choice):
+        # Only the current placement owns its proof, even if the same oriented
+        # state is legal at another destination of this piece.
+        frame['next'] += 1
+
     def visit(self, domains):
         if self.input_checkpoint is not None:
             self.restore(domains)
@@ -919,7 +943,20 @@ class _Search:
             if frame['next'] == len(frame['candidates']):
                 self.stack.pop()
                 continue
+            graph = self.neighbor_graph_for_frame(frame, depth) if self.neighbor_dispatch else None
             choice = frame['candidates'][frame['next']]
+            if graph is not None:
+                if frame['kind'] == 'piece':
+                    center = choice
+                    legal = list(_bits(frame['domains'][center] & (15 << (4 * frame['cell']))))
+                else:
+                    center, legal = frame['cell'], [choice]
+                excluded = query_neighbor_graph(graph, center, legal, self.check)
+                if excluded:
+                    self.skip_neighbor_choice(frame, choice)
+                    continue
+                if frame['next'] + 1 == len(frame['candidates']):
+                    del frame['neighbor_graph']
             if self.pivot_dispatch:
                 if 'pivot_excluded' not in frame:
                     # Restored frames own only their remaining alternatives.

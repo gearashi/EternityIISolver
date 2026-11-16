@@ -115,7 +115,7 @@ function snapshot(){const result={};for(const [id,node] of elements)result[id]={
         return rendered if event else rendered['rendered']
 
     def test_pivot_proof_option_is_available_only_for_standard_dfs(self):
-        for profile,option_id in (('full-pivot','pivotProfileOption'),('full-dispatch','dispatchProfileOption')):
+        for profile,option_id in (('full-pivot','pivotProfileOption'),('full-dispatch','dispatchProfileOption'),('full-neighbor','neighborProfileOption')):
             for method,engine,enabled in (
                 ('exact','dfs',True), ('exact','hybrid',False),
                 ('exact','partitioned',False), ('gpu','dfs',False),

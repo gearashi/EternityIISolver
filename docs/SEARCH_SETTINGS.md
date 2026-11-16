@@ -4,7 +4,13 @@ The release includes a disposition for each of the 67 proposals. [Improvement de
 
 ## Exact search for 480
 
-For fewer placement attempts on the tested regions, select **Advanced search → DFS → Maximum filtering + single-placement proofs (experimental) → 1 worker**.
+For the fewest placement attempts observed on these five-clue regional tests, select **Advanced search → DFS → Maximum filtering + forced-neighbor proofs (experimental) → 1 worker**.
+
+```text
+EternityIISolver start --method exact --exact-engine dfs --pruning full-neighbor --workers 1
+```
+
+The earlier **Maximum filtering + single-placement proofs (experimental)** profile is available with this command.
 
 ```text
 EternityIISolver start --method exact --exact-engine dfs --pruning full-dispatch --workers 1
@@ -19,6 +25,23 @@ EternityIISolver start --method exact --exact-engine dfs --pruning full-pivot --
 When switching from a saved DFS profile, select **Restart saved search** once so the app archives the old frontier. Starting again with the same profile and seed resumes its own compatible checkpoint.
 
 The DFS benchmark used the 256 official pieces, the five oriented clues, the Jef 466 reference and seed 20261007. A case freed a square 5×5, 7×7 or 9×9 corner. It required the originally matched edges in the declared scope so that a completion was known to exist. Each result passed a separate check of all physical pieces, fixed states, frame and selected edges.
+
+### Proving a piece cannot occupy a location
+
+When DFS tries a cell with four possible states or a piece with three or four possible locations, the solver can test whether a choice forces a contradiction. If an oriented piece has only one legal neighbor on a required edge, every completion using the first placement must also use that neighbor. DFS follows those implications and skips a location only if every allowed rotation leads to a conflict.
+
+| Regional task | Single-placement proofs | Forced-neighbor proofs |
+| --- | ---: | ---: |
+| 24 regions on the 466 reference board | 6,868 | 6,867 |
+| Southeast 9×9 within those 24 | 6,858 | 6,857 |
+| Same 9×9 and same parent, seed 20261123 | 6,809 | 6,808 |
+| Separate regions from three 465 boards | 4, 0, 1 | 4, 0, 1 |
+
+On the southeast 9×9 region, DFS considered placing tile #87 in row 11, column 13. Only one rotation was available. Two chains of forced neighbors required colors 4 and 6 on the same shared edge. The solver skipped that placement, then continued in the original order. It built 36 graphs and checked 119 choices on that run. The second seed encountered the same position and eliminated the same placement.
+
+Both profiles returned the same first board on every regional comparison. The hardest region returned 466/480 under both seeds. Placement counts include ordinary DFS choices and tentative lookahead trials.
+
+In a separate run requiring all 480 edges, both profiles reached the same checkpoint after 111 ordinary placements and 17 lookahead trials. The new rule checked 7 choices and skipped none in this opening segment. With instrumentation enabled, building the seven graphs took 6.96 seconds and examined 2,485,972 oriented-state and required-edge pairs.
 
 ### Skipping one impossible orientation
 

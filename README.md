@@ -16,7 +16,9 @@ BOINC-compatible worker development and the GPU DFS port remain **on hold**. Sta
 
 ## Choosing a search
 
-For fewer placements on the tested five-clue regions, choose **Advanced search → DFS → Maximum filtering + single-placement proofs (experimental) → 1 worker**. Across 24 regions on the 466 reference board, this profile used 6,868 placement attempts, compared with 6,892 for the two-placement pivot proof. Every region returned the same first board under both profiles. [Settings and benchmark results](docs/SEARCH_SETTINGS.md)
+For the fewest placement attempts observed on these five-clue regional tests, select **Advanced search → DFS → Maximum filtering + forced-neighbor proofs (experimental) → 1 worker**. Across 24 regions on the 466 reference board, this profile used 6,867 placement attempts. The previous profile used 6,868. [Settings and benchmark results](docs/SEARCH_SETTINGS.md)
+
+The earlier **Maximum filtering + single-placement proofs (experimental)** profile is also available. Across 24 regions on the 466 reference board, this profile used 6,868 placement attempts, compared with 6,892 for the two-placement pivot proof. Every region returned the same first board under both profiles.
 
 The earlier **Maximum filtering + pivot proof (experimental)** profile is also available. Across 24 regional searches on the official five-clue pieces, this used 6,892 placement attempts, including lookahead, compared with 6,910 for Maximum filtering alone. Both settings returned the same boards. The app’s full exact search requires all 480 edges.
 

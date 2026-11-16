@@ -1,15 +1,18 @@
-Version **0.5.5** adds an optional DFS profile that can skip a specific piece and rotation when a cell has two remaining choices. It uses edge colors and physical piece identities to prove that choice fails. DFS keeps its original order and counts a placement whenever it actually tries the other choice.
+Version **0.5.6** adds an optional DFS rule for proving that a piece cannot occupy a particular location.
 
-| Five-clue regional task | v0.5.4 pivot proof | Single-placement proofs |
+When DFS tries a cell with four possible states or a piece with three or four possible locations, the solver can test whether a choice forces a contradiction. If an oriented piece has only one legal neighbor on a required edge, every completion using the first placement must also use that neighbor. DFS follows those implications and skips a location only if every allowed rotation leads to a conflict.
+
+| Regional task | Single-placement proofs | Forced-neighbor proofs |
 | --- | ---: | ---: |
-| 24 regions on the 466 reference board | 6,892 attempts | 6,868 attempts |
-| Hardest region within those 24 | 6,882 | 6,858 |
-| Same region and parent with a second seed | 6,829 | 6,809 |
+| 24 regions on the 466 reference board | 6,868 | 6,867 |
+| Southeast 9×9 within those 24 | 6,858 | 6,857 |
+| Same 9×9 and same parent, seed 20261123 | 6,809 | 6,808 |
+| Separate regions from three 465 boards | 4, 0, 1 | 4, 0, 1 |
 
-Each comparison returned the same first board. Two regional searches on separate 465 parents tied at four and zero attempts. The hardest region returned 466/480 under both seeds. The counts include lookahead placements.
+Both profiles returned the same first board on every regional comparison. The hardest region returned 466/480 under both seeds. Placement counts include ordinary DFS choices and tentative lookahead trials.
 
-A fresh southeast 9×9 test used a third 465-point parent and seed 20261129. Both profiles returned the same board after 1 attempt. This case had no single-placement skips.
+On the southeast 9×9 region, DFS considered placing tile #87 in row 11, column 13. Only one rotation was available. Two chains of forced neighbors required colors 4 and 6 on the same shared edge. The solver skipped that placement, then continued in the original order. It built 36 graphs and checked 119 choices on that run. The second seed encountered the same position and eliminated the same placement.
 
-With all 480 edges required, both profiles reached the same checkpoint after 111 branch placements and 17 lookahead trials. The new rule skipped zero placements in that opening segment.
+In a separate run requiring all 480 edges, both profiles reached the same checkpoint after 111 ordinary placements and 17 lookahead trials. The new rule checked 7 choices and skipped none in this opening segment.
 
-To use this profile, select **Advanced search → DFS → Maximum filtering + single-placement proofs (experimental) → 1 worker**. When switching from another DFS profile, select **Restart saved search** once to archive its frontier. [Settings and replay instructions](https://github.com/gearashi/EternityIISolver/blob/v0.5.5/docs/SEARCH_SETTINGS.md)
+To use this profile, select **Advanced search → DFS → Maximum filtering + forced-neighbor proofs (experimental) → 1 worker**. When switching from another DFS profile, select **Restart saved search** once to archive its frontier. [Settings and replay instructions](https://github.com/gearashi/EternityIISolver/blob/v0.5.6/docs/SEARCH_SETTINGS.md)
