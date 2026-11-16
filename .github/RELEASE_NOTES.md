@@ -1,16 +1,9 @@
-Version **0.5.0** adds independently checked local repair proofs and new exact-search and repair settings for the five-clue Eternity II puzzle. The best verified board bundled with this release is Jef’s imported **466/480**.
+Version **0.5.1** lets DFS return a verified regional or full-board solution as soon as a lookahead placement forces every cell to one state. The same validator checks the resulting board. When resuming, DFS first reconstructs the saved frontier so it can accept a solution only from a branch still owned by that search.
 
-### Settings and results
+### What changed in the search
 
-- For an exact search with fewer tested placements, choose **Advanced search → DFS → Maximum filtering (experimental) → 1 worker**. On the difficult 9×9 official-piece benchmark it reached a checked completion in 6,941 decisions, including speculative probes and checkpoint replay. Baseline used 20,327 and finished sooner. These measurements concern the selected regional problem.
-- The regional master now shares interior-edge colors, learns regional allocation conflicts and reuses verified witnesses. New SAT piece channels, explained inventory rules, impact ordering and refined diagrams are available as experimental alternatives.
-- Matching repair can reuse positive witnesses and apply verified integer price bounds. Across 24 original-piece regional targets, combining the price and existing score bounds reduced placements from 239 to 75. It added 606 simplex iterations and more setup work.
-- Four experimental whole-puzzle modes now get through their original-board setup. Focused tests reach a real search decision or transition. The dashboard reports DFS lookahead trials separately.
-- `perfect-distance` checks how many final cell states a perfect board must change. For the bundled 466, the checked lower bound is **24**. The source includes a dependency-free verifier. The separate radius-eight enumeration excludes improvements to 467 that change eight or fewer oriented cells of the same parent.
-- `repair-radius` searches for a strict score improvement within a chosen changed-cell radius. The native packages include a C++ helper. The new component bounds reduced complete cell sets checked at radius seven from 15,931,447 to 1,646,927 on the official reference. `repair-patches` combines compatible local candidates, and `repair-parent-pair` ranks local boards for recombination.
+With **Maximum filtering** and **one CPU worker**, v0.5.0 and v0.5.1 each completed and validated all 24 original-piece regional tasks. On the southwest 9×9 interior, accepting a completed lookahead reduced the number of placements from two to one. The other 23 tasks tied, including the hard southeast 9×9 at 6,900 placements in each version. Both versions began each task from scratch with the same seed and a 17-minute limit.
 
-### Running the app
+Across all 24 tasks, placements fell from **6,911 to 6,910**. Both versions took 6,306 ordinary branches. The number of lookahead trials fell from 605 to 604. Recognizing completed trials added 508 scans covering 60,872 individual cell-domain checks. The observed benefit is one fewer trial on this workload. The best bundled five-clue board remains Jef’s imported **466/480**. [Search settings and benchmark details](https://github.com/gearashi/EternityIISolver/blob/v0.5.1/docs/SEARCH_SETTINGS.md)
 
-Extract the archive for Windows x64, Linux x64, Intel Mac or Apple Silicon Mac. Windows and Linux include CUDA and OpenCL backends. macOS uses OpenCL. Compatible system GPU drivers are required. The macOS builds are unsigned by a Developer ID certificate and are not notarized. The Python wheel and source archive are also included.
-
-Search, proof checking and candidate exports run locally. The dashboard downloads the public board archive only when you choose **Download and merge**. See `docs/SEARCH_SETTINGS.md` for the benchmark scope, limitations, reproduction commands and settings.
+Native downloads are available for Windows x64, Linux x64, Intel Mac and Apple Silicon Mac. Windows and Linux include CUDA and OpenCL. macOS uses OpenCL. A Python wheel and source archive are also available.

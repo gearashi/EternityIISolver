@@ -186,6 +186,12 @@ class _Interrupted(Exception):
         self.outcome = outcome
 
 
+class _ProbeWitness:
+    """A fully forced child awaiting the usual final solution check."""
+    def __init__(self, domains):
+        self.domains = domains
+
+
 class _Search:
     def __init__(self, problem, seconds, seed, should_stop, on_progress, checkpoint, on_checkpoint, checkpoint_interval, hints=None, options=None):
         self.problem = problem
@@ -697,6 +703,9 @@ class _Search:
             if self.propagate(trial, (cell,), matched) is None:
                 rejected |= 1 << state
                 self.probe_rejections += 1
+            # Replayed ancestors can contain siblings outside the saved frontier.
+            elif not self.restoring and all(mask.bit_count() == 1 for mask in trial):
+                return _ProbeWitness(trial)
         if rejected:
             domains[cell] &= ~rejected
             self.propagations += 1
@@ -799,8 +808,10 @@ class _Search:
                     self.conflicts += 1
                     self.stack.pop()
                     continue
-                if all(domain & (domain - 1) == 0 for domain in current):
-                    board = [domain.bit_length() - 1 for domain in current]
+                probe_completed = isinstance(matching, _ProbeWitness)
+                if probe_completed or all(domain & (domain - 1) == 0 for domain in current):
+                    leaf = matching.domains if probe_completed else current
+                    board = [domain.bit_length() - 1 for domain in leaf]
                     if not check_solution(self.problem, board):
                         raise AssertionError('DFS candidate failed independent exact-model validation')
                     self.committed_policy = _copy_policy(self.policy)

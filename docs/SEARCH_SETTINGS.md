@@ -14,6 +14,22 @@ When switching from a saved DFS profile, select **Restart saved search** once so
 
 The DFS benchmark used the 256 official pieces, the five oriented clues, the Jef 466 reference and seed 20261007. A case freed a square 5×5, 7×7 or 9×9 corner. It required the originally matched edges in the declared scope so that a completion was known to exist. Each result passed a separate check of all physical pieces, fixed states, frame and selected edges.
 
+### v0.5.1 lookahead comparison
+
+DFS checks whether a speculative placement has forced exactly one state at every cell. If it has, the usual solver validator checks the completed board. A resumed search applies this shortcut only after it has reconstructed its saved frontier.
+
+With Maximum filtering and one worker, v0.5.0 and v0.5.1 each solved all 24 restricted tasks from scratch using the same seed and a 17-minute limit per task. Each version made 24 final solver validation calls, and an independent checker replayed every result against its physical pieces, clues, frame and regional edge constraints.
+
+| Across 24 regions | v0.5.0 | v0.5.1 |
+| --- | ---: | ---: |
+| Ordinary DFS branches | 6,306 | 6,306 |
+| Lookahead placements | 605 | 604 |
+| Total placements | 6,911 | 6,910 |
+
+The southwest 9×9 interior took two placements in v0.5.0 and one in v0.5.1. The matching placement totals on the other 23 cases include 6,900 placements per version on the hardest southeast 9×9 interior. Checking successful lookahead trials for completion added 508 scans containing 60,872 individual domain checks. The best verified five-clue board in this comparison was the imported 466.
+
+### v0.5.0 comparison of five DFS profiles with checkpoint resume
+
 On the 23 easier regions that all five profiles completed within 1.5 seconds, Maximum filtering used 11 decisions in total, Adaptive used 30, and Baseline, Strong and Independent regions used 31 each. These totals count trial placements used for lookahead. The hardest case freed the bottom-right 9×9 and enforced originally matched internal edges. The first trial gave each profile two minutes. The continuations gave each unfinished profile up to 15 additional minutes from its saved frontier. A repeated placement or lookahead probe during resume counted again.
 
 | Hard 9×9 | Decisions to verified completion | Total elapsed |
@@ -28,7 +44,9 @@ Replay the same 133-edge region from source with `python scripts/replay_referenc
 
 On the hard task, each profile reconstructed the bundled 466 board cell for cell. An independent checker rebuilt the physical orientations from the raw tile file and verified all 133 selected edges. All five profiles eventually solved all 24 tasks. Summing placements across that fixed set gives 6,952 for Maximum filtering, 14,194 for Adaptive, 20,358 for Baseline, 20,378 for Independent regions and 90,082 for Strong. The hardest case accounts for most of each total.
 
-On this i7-4790, Baseline reached the hard regional witness first. Maximum filtering spent more work per branch and needed fewer placements. A full five-clue 480 run has a different search tree. The fastest full-board profile and its time to solution are unknown.
+In the v0.5.0 profile comparison on this i7-4790, Baseline reached the hard regional witness first. Maximum filtering spent more work per branch and needed fewer placements. A full five-clue 480 run has a different search tree. The fastest full-board profile and its time to solution are unknown.
+
+### Other exact-search engines
 
 **SAT with piece channels** uses the Glucose native solver with explicit piece-membership variables and pairwise clauses for small groups. On 24 held-out generated tasks it used 5,881 native decisions, compared with 6,358 for standard Glucose. It won on eight cases, lost on twelve and tied four. **Explained DFS with inventory rules** feeds justified color and regional deletions into conflict learning. **Regional master + conflict cores** shares the color of an interior edge between its two incident cells and caches checked local witnesses. On 49 completed small cases this coupling reduced local placements from 387 to 235 and native master branches from 1,434 to 1,041. These counters are specific to their engines.
 
