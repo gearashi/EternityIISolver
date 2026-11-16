@@ -216,6 +216,7 @@ class _Search:
         self.build_seconds = None
         # Scan order only. A retained index is rechecked against each new trial.
         self.probe_blocker = None
+        self.independent_blocker = None
         for key in _COUNTERS:
             setattr(self, key, 0)
         self.options = normalize_options(options)
@@ -563,11 +564,19 @@ class _Search:
         of the matched physical piece therefore satisfies every required edge.
         """
         self.independent_checks += 1
+        # An edge blocks this shortcut only while both current domains are undecided.
+        if not self.restoring and self.independent_blocker is not None:
+            a, b = self.independent_blocker
+            if domains[a].bit_count() > 1 and domains[b].bit_count() > 1:
+                return None
         if not self.valid_matching(domains, matched):
             return None
         undecided = {cell for cell, domain in enumerate(domains) if domain & (domain - 1)}
-        if any(a in undecided and b in undecided for a, b, _, _ in self.edges):
-            return None
+        for a, b, _, _ in self.edges:
+            if a in undecided and b in undecided:
+                if not self.restoring:
+                    self.independent_blocker = (a, b)
+                return None
         board = []
         for cell, domain in enumerate(domains):
             self.check()

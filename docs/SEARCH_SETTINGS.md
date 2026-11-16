@@ -14,6 +14,22 @@ When switching from a saved DFS profile, select **Restart saved search** once so
 
 The DFS benchmark used the 256 official pieces, the five oriented clues, the Jef 466 reference and seed 20261007. A case freed a square 5×5, 7×7 or 9×9 corner. It required the originally matched edges in the declared scope so that a completion was known to exist. Each result passed a separate check of all physical pieces, fixed states, frame and selected edges.
 
+### v0.5.3 independent-completion checks
+
+When no required edge joins two undecided cells, DFS can use a matching of physical pieces to fill the remaining cells independently. If a required edge blocks that shortcut, DFS remembers it. On the next call it checks whether both endpoints still have multiple placements. If either endpoint has become decided, DFS runs the ordinary matching and edge checks again. A new search starts with an empty watch.
+
+Across 24 original-piece regional tasks, we counted both methods along the same 6,910-placement search path. A separate run of the release candidate reproduced every v0.5.2 board and every DFS counter. It used 6,306 ordinary branches and 604 lookahead placements. Each board was independently verified against the printed pieces, frame, five fixed clues and required regional edges. The following counts describe the 2,944 calls to the independent-completion check.
+
+| Work inside those calls | v0.5.2 | With the edge watch |
+| --- | ---: | ---: |
+| Matching validations | 2,944 | 2 |
+| Cell classifications in scans of all domains | 753,664 | 512 |
+| Checks of remembered endpoints | 0 | 5,884 |
+| Reads of the edge watch | 0 | 2,944 |
+| Stores of a blocking edge | 0 | 2 |
+
+A separate run used the full puzzle with all five clues and all 480 edge constraints. It stopped at a fixed budget of 16 choices (five branches and eleven lookahead trials). The independent-completion check ran five times. Rechecking the remembered endpoints seven times reduced matching validations from five to two over this prefix. The effect on time to solve the full puzzle remains unknown.
+
 ### v0.5.2 work per lookahead placement
 
 A trial can finish the board only when every cell has exactly one legal placement left. DFS now remembers a cell that prevented a previous trial from being complete and checks it first on the next trial. If that cell is still undecided, a single check is sufficient. If it has become fixed, DFS scans the remaining cells. The index belongs to one search instance. A resumed search starts with a fresh index.
