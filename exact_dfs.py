@@ -186,6 +186,16 @@ class _Interrupted(Exception):
         self.outcome = outcome
 
 
+def _unresolved_cell(domains, previous):
+    """Find a non-singleton domain, checking a previous trial's blocker first."""
+    if previous is not None and domains[previous].bit_count() != 1:
+        return previous
+    for cell, mask in enumerate(domains):
+        if cell != previous and mask.bit_count() != 1:
+            return cell
+    return None
+
+
 class _ProbeWitness:
     """A fully forced child awaiting the usual final solution check."""
     def __init__(self, domains):
@@ -204,6 +214,8 @@ class _Search:
         self.last_progress = self.started
         self.last_checkpoint = self.started
         self.build_seconds = None
+        # Scan order only. A retained index is rechecked against each new trial.
+        self.probe_blocker = None
         for key in _COUNTERS:
             setattr(self, key, 0)
         self.options = normalize_options(options)
@@ -704,8 +716,10 @@ class _Search:
                 rejected |= 1 << state
                 self.probe_rejections += 1
             # Replayed ancestors can contain siblings outside the saved frontier.
-            elif not self.restoring and all(mask.bit_count() == 1 for mask in trial):
-                return _ProbeWitness(trial)
+            elif not self.restoring:
+                self.probe_blocker = _unresolved_cell(trial, self.probe_blocker)
+                if self.probe_blocker is None:
+                    return _ProbeWitness(trial)
         if rejected:
             domains[cell] &= ~rejected
             self.propagations += 1

@@ -14,6 +14,14 @@ When switching from a saved DFS profile, select **Restart saved search** once so
 
 The DFS benchmark used the 256 official pieces, the five oriented clues, the Jef 466 reference and seed 20261007. A case freed a square 5×5, 7×7 or 9×9 corner. It required the originally matched edges in the declared scope so that a completion was known to exist. Each result passed a separate check of all physical pieces, fixed states, frame and selected edges.
 
+### v0.5.2 work per lookahead placement
+
+A trial can finish the board only when every cell has exactly one legal placement left. DFS now remembers a cell that prevented a previous trial from being complete and checks it first on the next trial. If that cell is still undecided, a single check is sufficient. If it has become fixed, DFS scans the remaining cells. The index belongs to one search instance. A resumed search starts with a fresh index.
+
+On the same 24 original-piece regions, both versions returned identical independently checked boards and made **6,910 search choices** (ordinary branches plus speculative placements). The hard southeast 9×9 took **6,900 choices** in each version. Within the 508 lookahead completion checks, v0.5.1 tested 60,872 individual cell domains and v0.5.2 tested 889. The latter total includes 505 tests of the remembered cell and 384 tests in fallback scans.
+
+Across nine small generated cases, individual domain tests fell from 193 to 169 overall. One case needed one more test when the previously undecided cell had become fixed. The measurements establish a reduction in repeated domain inspection on the tested regions. The best verified board in the comparison was the imported 466.
+
 ### v0.5.1 lookahead comparison
 
 DFS checks whether a speculative placement has forced exactly one state at every cell. If it has, the usual solver validator checks the completed board. A resumed search applies this shortcut only after it has reconstructed its saved frontier.
