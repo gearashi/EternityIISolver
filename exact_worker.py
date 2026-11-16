@@ -21,6 +21,7 @@ import threading
 import time
 
 from app_paths import state_root
+from dfs_profiles import PRUNING_PROFILES, dfs_profile_options, validate_pivot_engine
 from exact_model import constraint_edges, from_bundle, problem_hash
 from process_control import RunLock
 from search_resources import peak_memory_mb
@@ -34,29 +35,7 @@ UNBOUNDED_SECONDS = 1.0e12  # Finite native API horizon, approximately 31,688 ye
 SCOPE = 'full-16x16-five-clue-puzzle-all-480-edges'
 ENGINES = ('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs')
 REPAIR_ENGINES = ('optimize', 'core-repair', 'matching', 'sat-optimize', 'gpu-matching')
-PRUNING_PROFILES = ('baseline', 'strong', 'full', 'adaptive', 'components', 'joint', 'relational')
 DEFAULT_SEED = 20261007
-
-
-def dfs_profile_options(profile):
-    """Return a fresh option set shared by packaged DFS and offline replays."""
-    if profile not in PRUNING_PROFILES:
-        raise ValueError('Unknown DFS pruning profile')
-    if profile == 'baseline':
-        return {}
-    if profile == 'components':
-        return {'component_completion': True}
-    if profile == 'joint':
-        return {'extra_rules': {'joint_colors': True}}
-    if profile == 'relational':
-        return {'extra_rules': {'relational': True}}
-    options = dict(gac=True, independent_completion=True, dual_branch=True,
-                   edge_branch=True, extra_rules=None)
-    if profile in ('full', 'adaptive'):
-        options.update(probe=True, extra_rules={})
-    if profile == 'adaptive':
-        options['adaptive'] = True
-    return options
 
 
 def _now():
@@ -126,7 +105,8 @@ def _settings(engine, seconds, seed, workers, port, backend='auto', replicas=409
     if type(workers) is not int or not 1 <= workers <= (4 if engine in ('cp-sat', 'optimize', 'partitioned') else 1):
         raise ValueError('CP-SAT, optimization and partitioned DFS permit one to four workers; other CPU engines require one')
     if pruning not in PRUNING_PROFILES:
-        raise ValueError('pruning must be baseline, strong, full or adaptive')
+        raise ValueError('Unknown DFS pruning profile')
+    validate_pivot_engine(pruning, engine, workers)
     if type(gpu_repair_batch) is not int or not 1 <= gpu_repair_batch <= 64:
         raise ValueError('GPU repair batch must be 1..64 neighborhoods')
     if type(port) is not int or not 1 <= port <= 65535:

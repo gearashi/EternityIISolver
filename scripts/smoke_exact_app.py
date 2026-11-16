@@ -15,7 +15,20 @@ import urllib.request
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
+from dfs_profiles import dfs_profile_options
+from exact_dfs import normalize_options
+from exact_rules import RULES_VERSION
 from validator import validate_board
+
+
+def profile_fingerprint(profile):
+    options = normalize_options(dfs_profile_options(profile))
+    if profile == 'full-pivot' and options.get('pivot_cut_v1') is not True:
+        raise AssertionError('The expected opt-in profile has no pivot proof setting')
+    payload = {'options': options, 'rules_version': RULES_VERSION if options['extra_rules'] is not None else None}
+    encoded = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('ascii')
+    return hashlib.sha256(encoded).hexdigest()
+
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):
@@ -109,6 +122,31 @@ def main():
                 report={'passed':True,'scope':'isolated frozen HTTP Start, bounded timeout, DFS resume and Stop; no full solution claimed',
                     'runs':runs,'stop_state':stopped['state'],'external_network_enabled':False,
                     'checkpoint_sha256':hashlib.sha256(checkpoint.read_bytes()).hexdigest()}
+                # Keep the existing default-start, resume and Stop receipt before
+                # starting a distinct profile in this temporary home.
+                default_checkpoint = json.loads(checkpoint.read_text(encoding='utf-8'))
+                assert default_checkpoint['options_hash'] == profile_fingerprint('baseline')
+                request('/start', {'method': 'exact', 'exact_engine': 'dfs', 'workers': 1,
+                                   'seed': 20261007, 'seconds': 1.5,
+                                   'pruning': 'full-pivot', 'fresh_exact': True})
+                pivot = wait_for(lambda s: belongs(s) and s.get('can_start')
+                                 and s.get('state') == 'finished_bounded_run'
+                                 and s.get('pruning') == 'full-pivot')
+                assert pivot.get('exact_outcome') == 'timeout' and pivot.get('resumed') is False, pivot
+                assert pivot.get('method') == 'exact' and pivot.get('exact_engine') == 'dfs', pivot
+                assert pivot.get('workers') == 1 and pivot.get('external_network_enabled') is False, pivot
+                enabled = json.loads(checkpoint.read_text(encoding='utf-8'))
+                enabled_hash = profile_fingerprint('full-pivot')
+                assert enabled_hash not in (default_checkpoint['options_hash'], profile_fingerprint('full'))
+                assert enabled['options_hash'] == enabled_hash
+                assert enabled['problem_hash'] == default_checkpoint['problem_hash']
+                assert enabled['seed'] == default_checkpoint['seed'] == 20261007
+                archived = list(checkpoint.parent.glob('exact-dfs-checkpoint.archived-*.json'))
+                assert len(archived) == 1 and hashlib.sha256(archived[0].read_bytes()).hexdigest() == report['checkpoint_sha256']
+                report['pivot_profile'] = {'pruning': pivot['pruning'], 'exact_outcome': pivot['exact_outcome'],
+                                           'resumed': pivot['resumed'], 'workers': pivot['workers'],
+                                           'seconds_limit': 1.5, 'options_hash': enabled_hash,
+                                           'default_checkpoint_archived': True}
             except BaseException as exc:
                 failure=exc
                 failure_traceback=traceback.format_exc()

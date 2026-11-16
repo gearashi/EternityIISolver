@@ -6,14 +6,16 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import tomllib
 import urllib.request
 import urllib.parse
 import webbrowser
 
 from app_paths import resource_root, state_root
+from dfs_profiles import PRUNING_PROFILES, validate_pivot_engine
 from process_control import read_status
 
-VERSION = '0.5.0'
+VERSION = tomllib.loads((resource_root() / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version']
 
 
 class _NoLocalRedirect(urllib.request.HTTPRedirectHandler):
@@ -44,7 +46,7 @@ def parser():
             command.add_argument('--workers', type=int, default=1, help='CPU workers (1; CP-SAT, optimization and partitioned DFS support up to 4)')
             command.add_argument('--gpu-repair-batch', type=int, default=16, help='GPU matching neighborhoods per batch1..64')
             command.add_argument('--repair-quality', choices=('baseline','guided','guided-lift','bounded','learned','partition-bounds','price-bounds'), default='baseline')
-            command.add_argument('--pruning', choices=('baseline', 'strong', 'full', 'adaptive', 'components', 'joint', 'relational'), default='baseline')
+            command.add_argument('--pruning', choices=PRUNING_PROFILES, default='baseline')
             command.add_argument('--fresh-exact', action='store_true', help='Archive the selected DFS/structured-repair checkpoint and explicitly restart')
             command.add_argument('--backend', choices=('auto', 'cuda', 'opencl'), default='auto')
             command.add_argument('--replicas', type=int, default=4096)
@@ -245,6 +247,9 @@ def main(argv=None):
             report = validate_board(board, bundle)
             print(json.dumps(report, indent=2))
             return 0 if report['valid'] else 2
+        if args.command in ('start', 'run'):
+            engine = args.exact_engine if args.method == 'exact' else 'gpu'
+            validate_pivot_engine(args.pruning, engine, args.workers)
         home = state_root(args.state_dir)
         if args.command == 'serve':
             from dashboard_server import main as serve

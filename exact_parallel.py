@@ -684,6 +684,8 @@ def solve(problem, seconds=60, seed=0, workers=1, should_stop=None, on_progress=
     if on_progress is not None and not callable(on_progress):
         raise ValueError('on_progress must be callable')
     options = exact_dfs.normalize_options(options)
+    if options.get('pivot_cut_v1'):
+        raise ValueError('Pivot proofs require standard DFS and cannot run in a partitioned queue')
     task_cache = _TaskCache(problem, enabled=USE_TASK_CACHE)
     path = None if queue_path is None else Path(queue_path)
     with _queue_lock(path):

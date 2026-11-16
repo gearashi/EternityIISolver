@@ -114,6 +114,20 @@ function snapshot(){const result={};for(const [id,node] of elements)result[id]={
         rendered = json.loads(result.stdout)
         return rendered if event else rendered['rendered']
 
+    def test_pivot_proof_option_is_available_only_for_standard_dfs(self):
+        for method, engine, enabled in (
+            ('exact', 'dfs', True),
+            ('exact', 'hybrid', False),
+            ('exact', 'partitioned', False),
+            ('gpu', 'dfs', False),
+        ):
+            with self.subTest(method=method, engine=engine):
+                status = self.server.status()
+                status['settings'] = dict(status.get('settings') or {},
+                                          method=method, exact_engine=engine, pruning='full-pivot')
+                rendered = self.render_status(status)
+                self.assertEqual(rendered['pivotProfileOption']['disabled'], not enabled)
+
     def test_boot_shows_cache_without_starting_archive_or_search(self):
         self.assertEqual(len(self.created), 1); self.assertEqual(self.created[0].starts, 0)
         status = self.server.status()

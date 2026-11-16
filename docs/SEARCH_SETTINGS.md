@@ -4,15 +4,28 @@ The release includes a disposition for each of the 67 proposals. [Improvement de
 
 ## Exact search for 480
 
-For a run that prioritizes fewer decisions, select **Advanced search → DFS → Maximum filtering (experimental) → 1 worker**. From a command prompt in a native build, use the following command.
+For a run that prioritizes fewer decisions, select **Advanced search → DFS → Maximum filtering + pivot proof (experimental) → 1 worker**. From a command prompt in a native build, use the following command.
 
 ```text
-EternityIISolver start --method exact --exact-engine dfs --pruning full --workers 1
+EternityIISolver start --method exact --exact-engine dfs --pruning full-pivot --workers 1
 ```
 
 When switching from a saved DFS profile, select **Restart saved search** once so the app archives the old frontier. Starting again with the same profile and seed resumes its own compatible checkpoint.
 
 The DFS benchmark used the 256 official pieces, the five oriented clues, the Jef 466 reference and seed 20261007. A case freed a square 5×5, 7×7 or 9×9 corner. It required the originally matched edges in the declared scope so that a completion was known to exist. Each result passed a separate check of all physical pieces, fixed states, frame and selected edges.
+
+### Pruning both placements of a cell
+
+Once DFS has chosen a cell with exactly two possible placements, it can sometimes prove that either choice leads to a contradiction. For example, using one physical piece here can force a neighboring cell to take its other piece. That placement can force another through its edge color. If both starting choices lead back to their own opposites, DFS skips both. It orders the original choices before checking the proof so that other branches keep their existing order. This option applies to single-worker DFS with Maximum filtering and no ordering hints.
+
+| Verified regional searches | Maximum filtering | With pivot proof |
+| --- | ---: | ---: |
+| 24 reference regions, seed 20261007 | 6,306 branches + 604 probes | 6,288 branches + 604 probes |
+| Southeast 9×9 alone, same seed | 6,303 + 597 | 6,285 + 597 |
+| Southeast 9×9, seed 20261123 | 6,253 + 592 | 6,237 + 592 |
+| Other reference boards, two regions | 4 attempts and 0 attempts | 4 attempts and 0 attempts |
+
+Each comparison returned the same first board in both runs. On the original southeast 9×9, nine proofs eliminated 18 unsuccessful placements. The solver made 2,073 proof calls and spent about 0.415 seconds in the proof code in the instrumented run. The two regions from different 465 boards finished before the rule could help. The 9×9 searches reconstructed a legal 466 board under the restricted edge set. The number of placements required to solve the unrestricted 480-edge puzzle remains unknown.
 
 ### v0.5.3 independent-completion checks
 

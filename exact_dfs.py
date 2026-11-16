@@ -14,7 +14,9 @@ import math
 import random
 import time
 
+from dfs_profiles import dfs_profile_options
 from exact_model import check_solution, constraint_edges, problem_hash
+from pivot_cut import prove_pivot
 
 CHECKPOINT_VERSION = 4
 ORDERING_VERSION = 'mrv-degree-lcv-hint-adaptive-v3'
@@ -32,7 +34,7 @@ def normalize_options(options=None):
     if options is None:
         options = {}
     extensions = {'component_completion': False, 'component_work': 20000, 'component_max_cells': 24}
-    if not isinstance(options, dict) or set(options) - (set(DEFAULT_OPTIONS) | set(extensions)):
+    if not isinstance(options, dict) or set(options) - (set(DEFAULT_OPTIONS) | set(extensions) | {'pivot_cut_v1'}):
         raise ValueError('Unknown DFS options or invalid options object')
     extra = dict(extensions, **{k:v for k,v in options.items() if k in extensions})
     if type(extra["component_completion"]) is not bool: raise ValueError("component_completion must be boolean")
@@ -51,6 +53,13 @@ def normalize_options(options=None):
     if result['extra_rules'] is not None:
         from exact_rules import normalize_options as normalize_rules
         result['extra_rules'] = normalize_rules(result['extra_rules'])
+    pivot_enabled = options.get('pivot_cut_v1', False)
+    if type(pivot_enabled) is not bool:
+        raise ValueError('pivot_cut_v1 must be boolean')
+    if pivot_enabled:
+        if result != normalize_options(dfs_profile_options('full')):
+            raise ValueError('Pivot proofs require the Maximum filtering settings')
+        result['pivot_cut_v1'] = True
     return result
 
 
@@ -220,6 +229,9 @@ class _Search:
         for key in _COUNTERS:
             setattr(self, key, 0)
         self.options = normalize_options(options)
+        self.pivot_enabled = self.options.get('pivot_cut_v1', False)
+        if self.pivot_enabled and (type(self) is not _Search or hints):
+            raise ValueError('Pivot proofs require standard DFS without ordering hints')
         self.policy = _new_policy()
         self.committed_policy = _copy_policy(self.policy)
         self.work_ticks = 0
@@ -869,6 +881,15 @@ class _Search:
                         self.stack.pop()
                         continue
                 kind, cell, candidates = self.choose_partition(current)
+                if self.pivot_enabled and depth > 8 and kind == 'cell' and len(candidates) == 2:
+                    proof = prove_pivot(self.problem, current, cell, edges=self.edges, check=self.check)
+                    if proof['outcome'] == 'contradiction':
+                        # Both choices fail ordinary propagation. Commit the
+                        # parent's real ordering draw before skipping them.
+                        self.committed_rng = self.rng.getstate()
+                        self.conflicts += 1
+                        self.stack.pop()
+                        continue
                 self.committed_rng = self.rng.getstate()
                 self.committed_policy = _copy_policy(self.policy) if self.options['adaptive'] else self.policy
                 frame = {'phase': 'branch', 'domains': current, 'matching': matching,

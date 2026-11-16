@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from socketserver import TCPServer
 
 from app_paths import resource_root, state_root
+from dfs_profiles import PRUNING_PROFILES, validate_pivot_engine
 from process_control import RunLock, read_status
 from validator import load_bundle, validate_board
 
@@ -33,7 +34,7 @@ def validate_settings(value):
         raise ValueError('Unsupported CPU search engine')
     if settings['repair_quality'] not in ('baseline','guided','guided-lift','bounded','learned','partition-bounds','price-bounds'):
         raise ValueError('Invalid repair quality policy')
-    if settings['pruning'] not in ('baseline', 'strong', 'full', 'adaptive', 'components', 'joint', 'relational') or type(settings['fresh_exact']) is not bool:
+    if settings['pruning'] not in PRUNING_PROFILES or type(settings['fresh_exact']) is not bool:
         raise ValueError('Invalid pruning profile or fresh-exact setting')
     if type(settings['gpu_repair_batch']) is not int or not 1 <= settings['gpu_repair_batch'] <= 64:
         raise ValueError('GPU repair batch must be 1..64 neighborhoods')
@@ -41,6 +42,8 @@ def validate_settings(value):
         raise ValueError('CPU workers must be an integer from 1 to 4')
     if settings['method'] == 'exact' and settings['exact_engine'] not in ('cp-sat', 'optimize', 'partitioned') and settings['workers'] != 1:
         raise ValueError('SAT and backtracking use one CPU worker')
+    engine = settings['exact_engine'] if settings['method'] == 'exact' else 'gpu'
+    validate_pivot_engine(settings['pruning'], engine, settings['workers'])
     if type(settings['replicas']) is not int or not 32 <= settings['replicas'] <= 32768:
         raise ValueError('Parallel searches must be an integer from 32 to 32768')
     if settings['backend'] not in ('auto', 'cuda', 'opencl'):

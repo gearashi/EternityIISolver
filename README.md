@@ -16,7 +16,7 @@ BOINC-compatible worker development and the GPU DFS port remain **on hold**. Sta
 
 ## Choosing a search
 
-For fewer tested placements, choose **Advanced search → DFS → Maximum filtering (experimental) → 1 worker**. On the hardest completed 9×9 benchmark from the official five-clue pieces, this used 6,941 decisions including probes and checkpoint reconstruction. Baseline used 20,327 and finished sooner. Every profile reconstructed Jef’s 466 arrangement on this known-feasible regional task. Exact search in the app asks for all 480 edges. [Settings, repair policies and original-board proofs](docs/SEARCH_SETTINGS.md)
+For fewer tested placements, choose **Advanced search → DFS → Maximum filtering + pivot proof (experimental) → 1 worker**. Across 24 regional searches on the official five-clue pieces, this used 6,892 placement attempts, including lookahead, compared with 6,910 for Maximum filtering alone. Both settings returned the same boards. The app’s full exact search requires all 480 edges. [Settings and benchmark results](docs/SEARCH_SETTINGS.md)
 
 ## Download and start
 

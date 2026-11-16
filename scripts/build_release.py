@@ -86,6 +86,9 @@ def main():
             raise RuntimeError(f"Bundled host C++ runtimes would shadow system GPU drivers: {shadowed}")
     if not args.skip_smoke:
         with tempfile.TemporaryDirectory(prefix="eternity-frozen-smoke-") as temporary:
+            reported = subprocess.check_output([str(executable), "--version"], cwd=temporary, text=True, timeout=30).strip()
+            if reported != version:
+                raise RuntimeError(f"Frozen CLI reports {reported!r}, expected {version!r}")
             helper_name = "eternity-radius.exe" if sys.platform == "win32" else "eternity-radius"
             helpers = {path.resolve() for path in app.rglob(helper_name) if path.parent.name == "native"}
             if len(helpers) != 1:
