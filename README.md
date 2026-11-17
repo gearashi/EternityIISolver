@@ -16,6 +16,8 @@ BOINC-compatible worker development and the GPU DFS port remain **on hold**. Sta
 
 ## Choosing a search
 
+**New in 0.6.0: fast compiled search.** Two engines use a compiled C++ core that tries tens of millions of pieces per second on each CPU thread. Select **Advanced search → Fast compiled search for the highest score** to look for complete boards with as many matching edges as possible, or **Fast compiled DFS for all 480** for a plain exhaustive search, and choose one worker per CPU core. Both continue from their checkpoints after Stop. They are much faster than the Python DFS but apply none of its pruning rules, and neither has solved the puzzle. [How it works, measurements and limits](docs/FAST_SEARCH.md)
+
 To use the neighbor capacity rule that reduced placement attempts in the regional comparison, select **Advanced search → DFS → Maximum filtering + neighbor capacity proofs (experimental) → 1 worker**. Across 24 regions on the 466 reference board, this profile used 6,857 attempts, compared with 6,867 for forced-neighbor proofs. On an independent window of a 465 board, the counts were 13,325 and 13,337. [Search settings and benchmark results](docs/SEARCH_SETTINGS.md)
 
 The earlier **Maximum filtering + single-placement proofs (experimental)** profile is also available. Across 24 regions on the 466 reference board, this profile used 6,868 placement attempts, compared with 6,892 for the two-placement pivot proof. Every region returned the same first board under both profiles.
@@ -35,7 +37,7 @@ Get the archive matching your computer from [Releases](https://github.com/gearas
 
 Open `EternityIISolver.exe` on Windows, `EternityIISolver.app` on macOS, or `EternityIISolver` on Linux. This opens the dashboard at [127.0.0.1:8765](http://127.0.0.1:8765/) **without starting a search**. Choose **Advanced search** or **GPU board repair**, then select the engine and click **Start**. CPU-only DFS, SAT, and CP-SAT need no GPU driver. DFS is the recommended fallback when native SAT or CP-SAT encoding is too costly; it is a Python baseline, with no claim to match an optimized native DFS implementation. The hybrid engine is experimental and needs a supported GPU for a fresh sampling stage.
 
-DFS, SAT, and hybrid use one CPU worker. CP-SAT allows **1–4** workers. GPU repair retains its backend selector and **32–32,768** parallel searches (default **4096**); those are GPU replicas, not CPU workers. Hybrid exposes the same numeric control as **GPU sample batch** for its short sampling stage. More replicas, larger batches, or more workers are not guaranteed to be faster. Stop the active search before changing settings.
+DFS, SAT, and hybrid use one CPU worker. CP-SAT allows **1–4** workers. The two fast compiled engines allow **1–64** threads (the dashboard offers up to 16). GPU repair retains its backend selector and **32–32,768** parallel searches (default **4096**); those are GPU replicas, not CPU workers. Hybrid exposes the same numeric control as **GPU sample batch** for its short sampling stage. More replicas, larger batches, or more workers are not guaranteed to be faster. Stop the active search before changing settings.
 
 **Stop & save** requests a clean search stop and saves local state. It preserves the best board and exports; DFS, GPU repair, and the two structured matching engines also save resumable search state. Hybrid reuses its frozen hints and separate DFS frontier on resume. SAT/CP-SAT native search state is not checkpointed. The dashboard stays available afterward. **Download and merge** is a separate, manual library operation with its own cancellation control. Closing the browser leaves the search and any requested archive operation running while the local dashboard server stays open.
 
@@ -50,6 +52,8 @@ EternityIISolver open
 EternityIISolver start --method exact --exact-engine dfs --workers 1
 EternityIISolver run --method exact --exact-engine cp-sat --workers 1 --seconds 60
 EternityIISolver exact --engine sat --workers 1 --seconds 60
+EternityIISolver start --method exact --exact-engine fast-score --workers 4
+EternityIISolver exact --engine fast-dfs --workers 4 --seconds 3600
 EternityIISolver start --method exact --exact-engine hybrid --backend auto --replicas 4096
 EternityIISolver exact --engine hybrid --backend auto --replicas 4096 --seconds 60
 EternityIISolver start --method gpu --backend auto --replicas 4096
@@ -141,6 +145,7 @@ CPU tests require no GPU and do not start a continuous search:
 ```sh
 python -m unittest test_validator test_library_cache test_library_download test_library_dashboard test_archive_import test_lifecycle test_gpu_backends test_boinc_worker test_boinc_cpu_workunit test_manual_export -v
 python -m unittest test_exact_cp test_exact_sat test_exact_dfs test_exact_worker test_exact_integration test_exact_pruning test_hybrid_sampling test_hybrid_worker -v
+python scripts/build_fast_helper.py && python -m unittest test_fast_search -v
 python -m unittest discover -s boinc -p "test_*.py" -v
 python launcher.py validate
 python launcher.py diagnose-exact

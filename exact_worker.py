@@ -33,8 +33,11 @@ MEMORY_SOFT_LIMIT_MB = 2048.0
 FULL_BOARD_REGION_WORK = 10_000_000
 UNBOUNDED_SECONDS = 1.0e12  # Finite native API horizon, approximately 31,688 years.
 SCOPE = 'full-16x16-five-clue-puzzle-all-480-edges'
-ENGINES = ('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs')
-REPAIR_ENGINES = ('optimize', 'core-repair', 'matching', 'sat-optimize', 'gpu-matching')
+ENGINES = ('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs', 'fast-dfs', 'fast-score')
+REPAIR_ENGINES = ('optimize', 'core-repair', 'matching', 'sat-optimize', 'gpu-matching', 'fast-score')
+# Compiled helper engines: fast-dfs is an exhaustive all-480 search, fast-score a high-score heuristic.
+FAST_ENGINES = ('fast-dfs', 'fast-score')
+FAST_MAX_WORKERS = 64
 DEFAULT_SEED = 20261007
 
 
@@ -89,6 +92,8 @@ def _backend(engine):
         from smart_repair import solve
     elif engine == 'partitioned':
         from exact_parallel import solve
+    elif engine in FAST_ENGINES:
+        from fast_search import solve
     else:
         from exact_cp import solve
     return solve
@@ -102,8 +107,8 @@ def _settings(engine, seconds, seed, workers, port, backend='auto', replicas=409
         raise ValueError('seconds must be finite and nonnegative, or omitted')
     if type(seed) is not int or not 0 <= seed < 2**32:
         raise ValueError('seed must be a uint32 integer')
-    if type(workers) is not int or not 1 <= workers <= (4 if engine in ('cp-sat', 'optimize', 'partitioned') else 1):
-        raise ValueError('CP-SAT, optimization and partitioned DFS permit one to four workers; other CPU engines require one')
+    if type(workers) is not int or not 1 <= workers <= (FAST_MAX_WORKERS if engine in FAST_ENGINES else 4 if engine in ('cp-sat', 'optimize', 'partitioned') else 1):
+        raise ValueError('CP-SAT, optimization and partitioned DFS permit one to four workers; fast compiled search permits 1 to 64; other CPU engines require one')
     if pruning not in PRUNING_PROFILES:
         raise ValueError('Unknown DFS pruning profile')
     validate_pivot_engine(pruning, engine, workers)
@@ -215,7 +220,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
               'port': port, 'state_dir': str(home), 'start_time': _now(),
               'last_update': _now(), 'elapsed_seconds': 0.0, 'best_score': None,
               'source_best_score': 466, 'branches': 0, 'conflicts': 0,
-              'exact_counters_available': engine in ('dfs', 'hybrid', 'partitioned'),
+              'exact_counters_available': engine in ('dfs', 'hybrid', 'partitioned') + FAST_ENGINES,
               'pruning': pruning, 'repair_quality': repair_quality, 'neighborhoods': 0, 'recombinations': 0,
               'diversification_attempts': 0, 'diversifications': 0, 'tabu_rejections': 0,
               'region_calls': 0, 'region_improvements': 0, 'region_seconds': 0.0, 'parent_count': 0,
@@ -288,7 +293,8 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                         'quality_true_score_gain', 'quality_stopped_calls',
                         'tickets_total', 'tickets_completed', 'split_tickets', 'queue_records', 'cost_batches', 'cost_pairs',
                         'cost_kernel_seconds', 'cost_elapsed_seconds', 'target_score', 'hitting_set_seconds',
-                        'gac_checks', 'gac_removed', 'independent_completions', 'probe_checks', 'probe_rejections'):
+                        'gac_checks', 'gac_removed', 'independent_completions', 'probe_checks', 'probe_rejections',
+                        'complete_boards', 'restarts', 'nodes_per_second', 'engine_best_score'):
                 value = progress.get(key)
                 if type(value) in (int, float) and math.isfinite(value) and value >= 0:
                     status[key] = value
@@ -473,6 +479,18 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                             solve_args['parents'] = []
                             status['cached_parents_warning'] = f'Local parent cache unavailable: {type(exc).__name__}'
                         status['cached_parent_count'] = len(solve_args['parents'])
+            if engine in FAST_ENGINES:
+                from fast_search import has_saved_search
+                fast_dir = runtime / engine
+                if fresh_exact and fast_dir.exists():
+                    fast_dir.replace(runtime / f'{engine}.archived-{time.time_ns()}')
+                    status['previous_checkpoint_archived'] = True
+                solve_args.update(state_dir=fast_dir, mode='score' if engine == 'fast-score' else 'strict')
+                status['resumed'] = has_saved_search(fast_dir)
+                status['resume_capability'] = 'compiled search checkpoints, one per worker thread'
+                status['compute_device'] = 'CPU compiled search'
+                if engine == 'fast-score':
+                    status['counter_semantics'] = 'compiled search placements and complete boards under a heuristic break schedule; not an exhaustive search, BOINC nodes or credit'
             checkpoint_path = runtime / ('exact-hybrid-dfs-checkpoint.json' if engine == 'hybrid' else 'exact-dfs-checkpoint.json')
             hint_solution = None
             if engine == 'hybrid':
@@ -544,7 +562,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             try:
                 result = {'outcome':'solved','board':hint_solution} if hint_solution is not None else solver(**solve_args)
             except ValueError as exc:
-                if engine in ('dfs', 'hybrid', 'partitioned', 'matching', 'gpu-matching') and status['resumed']:
+                if engine in ('dfs', 'hybrid', 'partitioned', 'matching', 'gpu-matching') + FAST_ENGINES and status['resumed']:
                     raise ValueError(f'Saved search could not be resumed; use --fresh-exact to archive it and restart: {exc}') from exc
                 raise
             heartbeat_done.set()
@@ -627,7 +645,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             save_status()
             session.update(finished_at=_now(), outcome=status.get('exact_outcome'), status=dict(status),
                            elapsed_seconds=time.monotonic() - started,
-                           native_search_state_resumed=False if engine not in ('dfs', 'hybrid', 'partitioned') else status['resumed'],
+                           native_search_state_resumed=False if engine not in ('dfs', 'hybrid', 'partitioned') + FAST_ENGINES else status['resumed'],
                            repair_search_state_resumed=engine in ('matching', 'gpu-matching') and status['resumed'])
             if isinstance(result, dict):
                 session['result'] = {key: value for key, value in result.items() if key not in ('board', 'checkpoint')}
@@ -652,7 +670,7 @@ def main(argv=None, solver_factory=None):
     parser.add_argument('--gpu-repair-batch', type=int, default=16, help='GPU matching neighborhoods per batch (1..64)')
     parser.add_argument('--pruning', choices=PRUNING_PROFILES, default='baseline', help='DFS pruning profile; changing profile requires a compatible checkpoint or --fresh-exact')
     parser.add_argument('--preserve-stop', action='store_true')
-    parser.add_argument('--fresh-exact', action='store_true', help='Archive the selected DFS/structured-repair checkpoint and start a fresh search')
+    parser.add_argument('--fresh-exact', action='store_true', help='Archive the selected DFS, fast-search or structured-repair checkpoint and start a fresh search')
     parser.add_argument('--port', type=int, default=8765, help='Dashboard metadata only; no server is started')
     args = parser.parse_args(argv)
     try:

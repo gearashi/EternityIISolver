@@ -2,6 +2,15 @@
 
 The release includes a disposition for each of the 67 proposals. [Improvement decisions](IMPROVEMENTS.md)
 
+## Fast compiled search
+
+For raw search speed, select **Advanced search → Fast compiled search for the highest score** (complete boards with as many matches as possible) or **Fast compiled DFS for all 480**, with one worker per CPU core. These engines use a compiled core and none of the pruning profiles below. [Fast compiled search](FAST_SEARCH.md)
+
+```text
+EternityIISolver start --method exact --exact-engine fast-score --workers 4
+EternityIISolver start --method exact --exact-engine fast-dfs --workers 4
+```
+
 ## Exact search for 480
 
 To run the single-worker DFS profile that used fewer placement attempts than forced-neighbor proofs on the regional tests below, select **Advanced search → DFS → Maximum filtering + neighbor capacity proofs (experimental) → 1 worker**.

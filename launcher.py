@@ -42,8 +42,8 @@ def parser():
         command.add_argument('--state-dir', type=Path, help='Folder for checkpoints, cache, logs and results')
         if name in ('start', 'run'):
             command.add_argument('--method', choices=('gpu', 'exact'), default='gpu')
-            command.add_argument('--exact-engine', choices=('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs'), default='dfs')
-            command.add_argument('--workers', type=int, default=1, help='CPU workers (1; CP-SAT, optimization and partitioned DFS support up to 4)')
+            command.add_argument('--exact-engine', choices=('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs', 'fast-dfs', 'fast-score'), default='dfs')
+            command.add_argument('--workers', type=int, default=1, help='CPU workers (1; CP-SAT, optimization and partitioned DFS support up to 4; fast-dfs and fast-score up to 64)')
             command.add_argument('--gpu-repair-batch', type=int, default=16, help='GPU matching neighborhoods per batch1..64')
             command.add_argument('--repair-quality', choices=('baseline','guided','guided-lift','bounded','learned','partition-bounds','price-bounds'), default='baseline')
             command.add_argument('--pruning', choices=PRUNING_PROFILES, default='baseline')

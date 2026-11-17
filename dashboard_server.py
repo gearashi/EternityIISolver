@@ -30,7 +30,7 @@ def validate_settings(value):
     settings = dict(DEFAULT_SETTINGS, **value)
     if settings['method'] not in ('gpu', 'exact'):
         raise ValueError('Search method must be gpu or exact')
-    if settings['exact_engine'] not in ('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs'):
+    if settings['exact_engine'] not in ('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs', 'fast-dfs', 'fast-score'):
         raise ValueError('Unsupported CPU search engine')
     if settings['repair_quality'] not in ('baseline','guided','guided-lift','bounded','learned','partition-bounds','price-bounds'):
         raise ValueError('Invalid repair quality policy')
@@ -38,9 +38,10 @@ def validate_settings(value):
         raise ValueError('Invalid pruning profile or fresh-exact setting')
     if type(settings['gpu_repair_batch']) is not int or not 1 <= settings['gpu_repair_batch'] <= 64:
         raise ValueError('GPU repair batch must be 1..64 neighborhoods')
-    if type(settings['workers']) is not int or not 1 <= settings['workers'] <= 4:
-        raise ValueError('CPU workers must be an integer from 1 to 4')
-    if settings['method'] == 'exact' and settings['exact_engine'] not in ('cp-sat', 'optimize', 'partitioned') and settings['workers'] != 1:
+    fast = settings['exact_engine'] in ('fast-dfs', 'fast-score')
+    if type(settings['workers']) is not int or not 1 <= settings['workers'] <= (64 if fast else 4):
+        raise ValueError('CPU workers must be an integer from 1 to 4 (1 to 64 for fast compiled search)')
+    if settings['method'] == 'exact' and settings['exact_engine'] not in ('cp-sat', 'optimize', 'partitioned', 'fast-dfs', 'fast-score') and settings['workers'] != 1:
         raise ValueError('SAT and backtracking use one CPU worker')
     engine = settings['exact_engine'] if settings['method'] == 'exact' else 'gpu'
     validate_pivot_engine(settings['pruning'], engine, settings['workers'])
@@ -210,7 +211,7 @@ class DashboardServer(ThreadingHTTPServer):
                         for key in tuple(saved):
                             if key.startswith(('quality_','region_reasoning_')) or key in ('region_cache_hits','component_counters_session','rule_counters_session','reasoning_counters_session'): saved.pop(key,None)
                         if self.settings['method'] == 'exact':
-                            native = self.settings['exact_engine'] not in ('dfs', 'hybrid', 'partitioned')
+                            native = self.settings['exact_engine'] not in ('dfs', 'hybrid', 'partitioned', 'fast-dfs', 'fast-score')
                             saved.update(branches=None if native else 0, conflicts=None if native else 0,
                                          exact_counters_available=not native, exact_phase='starting')
                             saved.update(neighborhoods=0, recombinations=0, diversification_attempts=0,
@@ -218,7 +219,8 @@ class DashboardServer(ThreadingHTTPServer):
                                          region_improvements=0, region_seconds=0.0, parent_count=0)
                             for key in ('max_depth', 'exact_outcome', 'exact_conclusion', 'rounds', 'free_cells', 'cores', 'cost_backend', 'cost_device', 'cost_batches', 'cost_pairs',
                                         'cost_kernel_seconds', 'cost_fallback_reason', 'tickets_total', 'tickets_completed',
-                                        'split_tickets', 'queue_records', 'target_score', 'hitting_set_seconds'):
+                                        'split_tickets', 'queue_records', 'target_score', 'hitting_set_seconds',
+                                        'complete_boards', 'restarts', 'nodes_per_second', 'engine_best_score'):
                                 saved.pop(key, None)
                         saved.pop('error', None)
                         saved.pop('traceback', None)

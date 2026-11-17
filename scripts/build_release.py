@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from build_support import resource_files, documentation_files
 from build_radius_helper import build as build_radius_helper
+from build_fast_helper import build as build_fast_helper
 
 def sha256(path):
     result = hashlib.sha256()
@@ -71,6 +72,7 @@ def main():
     if sys.platform == "darwin" and args.flavor != "opencl":
         parser.error("macOS builds use OpenCL")
     build_radius_helper(ROOT)
+    build_fast_helper(ROOT)
     write_metadata(args.flavor, version)
     environment = os.environ.copy()
     environment["ETERNITY_BUILD_CUDA"] = "1" if args.flavor == "cuda-opencl" else "0"
@@ -99,6 +101,24 @@ def main():
                                     capture_output=True, text=True, check=True, timeout=30)
             if native.stdout.split() != ["complete"] + ["0"] * 8:
                 raise RuntimeError(f"Frozen native radius helper failed its fixed-board check: {native.stdout}")
+            fast_name = "eternity-fast.exe" if sys.platform == "win32" else "eternity-fast"
+            fast_helpers = {path.resolve() for path in app.rglob(fast_name) if path.parent.name == "native"}
+            if len(fast_helpers) != 1:
+                raise RuntimeError("Expected one packaged fast-search helper")
+            # One all-gray piece on a 1x1 board: solved at once, exit code 0, board [state] written.
+            fast_dir = Path(temporary) / "fast-helper"
+            fast_dir.mkdir()
+            (fast_dir / "pieces.txt").write_text("0 0 0 0\n", encoding="ascii")
+            fast = subprocess.run([str(fast_helpers.pop()), "--pieces", str(fast_dir / "pieces.txt"), "--size", "1", "--out", str(fast_dir)],
+                                  stdin=subprocess.DEVNULL, cwd=temporary, capture_output=True, text=True, timeout=30)
+            fast_board = json.loads((fast_dir / "best.json").read_text(encoding="utf-8")) if fast.returncode == 0 else {}
+            if fast_board.get("claimed_score") != 0 or len(fast_board.get("board", ())) != 1:
+                raise RuntimeError(f"Frozen fast-search helper failed its one-piece check: {fast.stdout} {fast.stderr}")
+            fast_run = subprocess.run([str(executable), "exact", "--engine", "fast-dfs", "--workers", "2", "--seconds", "2",
+                                       "--state-dir", str(fast_dir / "state")], cwd=temporary, capture_output=True, text=True, timeout=120)
+            fast_status = json.loads((fast_dir / "state" / "runtime" / "status.json").read_text(encoding="utf-8"))
+            if fast_run.returncode != 0 or fast_status.get("state") != "finished_bounded_run" or not fast_status.get("branches"):
+                raise RuntimeError(f"Frozen fast-dfs run failed: {fast_run.stdout} {fast_run.stderr}")
             checked = subprocess.run([str(executable), "validate"], cwd=temporary, capture_output=True, text=True, check=True, timeout=90)
             report = json.loads(checked.stdout)
             if not report.get("valid") or report.get("score") != 466:
