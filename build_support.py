@@ -40,7 +40,7 @@ DISTRIBUTION_DOCUMENTS = (
     "docs/BOINC.md", "docs/BOINC_CPU.md", "docs/EXACT_SEARCH.md", "docs/SMART_SEARCH.md", "docs/FAST_SEARCH.md", "boinc/job.xml", "boinc/workunit.sample.json",
     "boinc/input_template.xml", "boinc/output_template.xml",
     "boinc/validate_result.py", "boinc/test_validate_result.py",
-    "docs/evidence/exact-comparison-20261009.json", "docs/evidence/exact-computation-manifest.json",
+    "docs/evidence/fast-search-cloud-20261117.json", "docs/evidence/exact-comparison-20261009.json", "docs/evidence/exact-computation-manifest.json",
     "docs/evidence/pruning-comparison-20261009.json", "docs/evidence/hybrid-ordering-20261009.json",
     "docs/evidence/hybrid-sampling-cuda-20261009.json", "docs/evidence/hybrid-sampling-opencl-20261009.json",
     "docs/evidence/smart-pruning-20261013.json", "docs/evidence/smart-pruning-repeats-20261013.json",

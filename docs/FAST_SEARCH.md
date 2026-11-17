@@ -36,7 +36,24 @@ The compiled helper only proposes boards. Each board file is re-scored in Python
 
 ## Measurements
 
-Measured speeds and score timelines are added with the release evidence.
+A bounded measurement on 17 November 2026 used a cloud machine with four virtual CPUs (Intel Xeon, 2.1 GHz), the GCC build, four workers and seed 20261007. Each engine started from empty state. [Evidence](evidence/fast-search-cloud-20261117.json)
+
+| Engine | Time | Pieces tried | Rate | Result |
+| --- | ---: | ---: | ---: | --- |
+| Fast compiled DFS | 60 s | 14.1 billion | 233 million / s | Deepest placement 200 of 256; no solution |
+| Fast compiled score search | 1,500 s | 358.5 billion | 239 million / s | Complete boards of 459, 460 and 461; no 462 |
+
+The score search found its 459 board in under a second, the 460 board after 344 seconds and the 461 board after 1,191 seconds. It then looked for a 462 board for the remaining five minutes without finding one. All three boards pass the release validator, and all are below the 466 reference, so the saved best did not change.
+
+This is one run with one seed, and the time to each board varies a great deal between seeds. In this run each further point took several times longer than the one before. At that rate a board above the 466 reference is not expected within hours or days on four threads, and the measurement gives no evidence that this search can reach it.
+
+For scale, the Python DFS with neighbor capacity proofs tried about 8 pieces per second on the same machine and reached placement 124 in two hours. Its placements each carry far more filtering, so the two rates do not compare progress toward a solution.
+
+To repeat the measurement on your own computer:
+
+```sh
+python scripts/benchmark_fast_search.py --workers 4 --strict-seconds 60 --score-seconds 1500 --output fast-search.json
+```
 
 ## Limits
 
