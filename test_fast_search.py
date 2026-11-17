@@ -5,6 +5,7 @@ a C++17 compiler is available; otherwise they are skipped.
 """
 import ast
 from dataclasses import replace
+import functools
 import hashlib
 import json
 import os
@@ -240,28 +241,31 @@ class WorkerWiringTests(TemporaryState):
         for engine in exact_worker.FAST_ENGINES:
             self.assertIn(f'<option value="{engine}">', page)
 
-    def run_worker(self, engine, **options):
+    def run_worker(self, engine, max_nodes, **options):
+        # A placement cap ends each run, so the result does not depend on machine speed.
+        capped = functools.partial(fast_search.solve, max_nodes=max_nodes)
         with patch.object(exact_worker, 'peak_memory_mb', return_value=64.0), \
                 patch.object(fast_search, 'helper_path', return_value=self.need_helper()):
-            code = exact_worker.run_task(self.home, engine=engine, seed=7, **options)
+            code = exact_worker.run_task(self.home, engine=engine, seed=7, seconds=120.0,
+                                         solver_factory=lambda _: capped, **options)
         return code, json.loads((self.home / 'runtime' / 'status.json').read_text(encoding='utf-8'))
 
     def test_worker_runs_resumes_and_restarts_the_strict_engine(self):
-        code, status = self.run_worker('fast-dfs', seconds=1.0, workers=2)
+        code, status = self.run_worker('fast-dfs', 2 ** 20, workers=2)
         self.assertEqual((0, 'finished_bounded_run', 'fast-dfs', False), (code, status['state'], status['exact_engine'], status['resumed']))
         self.assertGreater(status['branches'], 0)
         self.assertEqual(466, status['best_score'])
-        code, again = self.run_worker('fast-dfs', seconds=1.0, workers=2)
+        code, again = self.run_worker('fast-dfs', 2 ** 22, workers=2)
         self.assertEqual((0, True), (code, again['resumed']))
         self.assertGreater(again['branches'], status['branches'])
-        code, mismatch = self.run_worker('fast-dfs', seconds=1.0, workers=1)
+        code, mismatch = self.run_worker('fast-dfs', 2 ** 22, workers=1)
         self.assertEqual((1, 'error'), (code, mismatch['state']))
         self.assertIn('--fresh-exact', mismatch['error'])
-        code, fresh = self.run_worker('fast-dfs', seconds=1.0, workers=1, fresh_exact=True)
+        code, fresh = self.run_worker('fast-dfs', 2 ** 20, workers=1, fresh_exact=True)
         self.assertEqual((0, False, True), (code, fresh['resumed'], fresh['previous_checkpoint_archived']))
 
     def test_worker_keeps_the_saved_best_during_a_score_run(self):
-        code, status = self.run_worker('fast-score', seconds=2.0, workers=2)
+        code, status = self.run_worker('fast-score', 10 ** 8, workers=2)
         self.assertEqual((0, 'finished_bounded_run', 466), (code, status['state'], status['best_score']))
         self.assertGreaterEqual(status['target_score'], 480 - len(fast_search.OFFICIAL_SCORE_PROFILE['breaks']))
         best = json.loads((self.home / 'runtime' / 'best.json').read_text(encoding='utf-8'))

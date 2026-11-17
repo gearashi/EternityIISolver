@@ -114,7 +114,7 @@ def main():
             fast_board = json.loads((fast_dir / "best.json").read_text(encoding="utf-8")) if fast.returncode == 0 else {}
             if fast_board.get("claimed_score") != 0 or len(fast_board.get("board", ())) != 1:
                 raise RuntimeError(f"Frozen fast-search helper failed its one-piece check: {fast.stdout} {fast.stderr}")
-            fast_run = subprocess.run([str(executable), "exact", "--engine", "fast-dfs", "--workers", "2", "--seconds", "2",
+            fast_run = subprocess.run([str(executable), "exact", "--engine", "fast-dfs", "--workers", "2", "--seconds", "15",
                                        "--state-dir", str(fast_dir / "state")], cwd=temporary, capture_output=True, text=True, timeout=120)
             fast_status = json.loads((fast_dir / "state" / "runtime" / "status.json").read_text(encoding="utf-8"))
             if fast_run.returncode != 0 or fast_status.get("state") != "finished_bounded_run" or not fast_status.get("branches"):
