@@ -13,6 +13,8 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+import threading
+import time
 import tomllib
 import unittest
 import uuid
@@ -163,6 +165,36 @@ class RealHelperTests(TemporaryState):
                 self.assertNotIn('proof_scope', result)
             self.assertGreater(result['branches'], 0)
         self.assertEqual({'solved', 'infeasible'}, seen)
+
+    def test_final_report_survives_a_reader_holding_the_file(self):
+        # Windows does not let a file be replaced while it is open. A reader that keeps
+        # opening the status file must not make the helper lose its final report.
+        helper = self.need_helper()
+        states = [self.home / f'held-{index}' for index in range(6)]
+        done = threading.Event()
+
+        def hold_open():
+            while not done.is_set():
+                for state in states:
+                    try:
+                        with (state / 'status.json').open('rb') as stream:
+                            stream.read()
+                            time.sleep(0.003)
+                    except OSError:
+                        pass
+                time.sleep(0.002)
+
+        reader = threading.Thread(target=hold_open, daemon=True)
+        reader.start()
+        try:
+            for index, state in enumerate(states):
+                problem, answer = generated_problem(4, 3, 300 + index, clue_count=1)
+                result = fast_search.solve(problem, 60, seed=index, workers=2, state_dir=state, helper=helper, prefix=2)
+                self.assertEqual('solved', result['outcome'], index)
+                self.assertTrue(check_solution(problem, result['board']))
+        finally:
+            done.set()
+            reader.join(timeout=10)
 
     def test_score_ladder_reports_rising_validated_boards(self):
         helper = self.need_helper()

@@ -1,6 +1,6 @@
 # Fast compiled search
 
-Version 0.6.0 adds a compiled C++ search core and two engines that use it. Both run offline on the CPU, keep the five official clues fixed, and are started from **Advanced search** in the dashboard or from the command line.
+Version 0.6.1 adds a compiled C++ search core and two engines that use it. Both run offline on the CPU, keep the five official clues fixed, and are started from **Advanced search** in the dashboard or from the command line.
 
 | Engine | Goal | Workers | Stop and restart |
 | --- | --- | --- | --- |

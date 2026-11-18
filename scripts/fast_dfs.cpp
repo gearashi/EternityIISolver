@@ -38,8 +38,11 @@
 #include <thread>
 #include <vector>
 #ifdef _WIN32
+#include <filesystem>
 #include <io.h>
+#include <system_error>
 #define LOW_READ _read
+#define FAST_REPLACE_RETRY 1
 #else
 #include <unistd.h>
 #define LOW_READ read
@@ -252,10 +255,20 @@ static void write_atomic(const char *path, const char *text) {
     FILE *f = fopen(tmp, "wb");
     if (!f) { fprintf(stderr, "eternity-fast: cannot write %s\n", tmp); return; }
     fputs(text, f); fclose(f);
-#ifdef _WIN32
-    remove(path);
-#endif
+#ifdef FAST_REPLACE_RETRY
+    /* Windows refuses to replace a file while a reader has it open, so a report
+     * could be lost when the app polled at the same moment. Try again until the
+     * reader has closed it; a reader holds the file for well under a millisecond. */
+    for (int attempt = 0; attempt < 600; attempt++) {
+        std::error_code failure;
+        std::filesystem::rename(tmp, path, failure);
+        if (!failure) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(attempt < 100 ? 1 : 10));
+    }
+    fprintf(stderr, "eternity-fast: cannot replace %s\n", path);
+#else
     if (rename(tmp, path)) fprintf(stderr, "eternity-fast: cannot rename %s\n", tmp);
+#endif
 }
 
 static void save_board(Thread *t, int score, uint64_t nodes, int is_best) {
