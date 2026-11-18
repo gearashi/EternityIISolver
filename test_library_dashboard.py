@@ -109,7 +109,7 @@ function snapshot(){const result={};for(const [id,node] of elements)result[id]={
 '''
         result = subprocess.run([node, '-e', script, str(self.server.resources / 'Dashboard.html'),
                                  json.dumps({'status': status, 'live': live, 'event': event})],
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=120)  # a loaded build machine can take over 10 s to start Node
         self.assertEqual(result.returncode, 0, result.stderr)
         rendered = json.loads(result.stdout)
         return rendered if event else rendered['rendered']
