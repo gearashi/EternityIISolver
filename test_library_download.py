@@ -263,19 +263,48 @@ class ManualArchiveTests(unittest.TestCase):
         self.assertEqual(calls[0][3]['If-None-Match'], '"good"')
         self.assertEqual(self.manager.status()['known_exact_boards'], 1)
 
-    def test_matching_200_response_headers_skip_the_body(self):
-        for generation, headers in enumerate((
-                {'ETag': '"identical"'}, {'Last-Modified': 'Tue, 24 Nov 2026 01:02:03 GMT'}), start=1):
-            with self.subTest(headers=headers):
-                # A new compressed representation initially receives these validators.
-                body = gzip.compress(gzip.decompress(self.payload), mtime=generation)
-                headers = dict(headers, **{'Content-Length': str(len(body))})
-                self.run_download(Response(body, headers=headers))
-                response = Response(body, headers=headers)
-                with patch.object(response, 'read1', side_effect=AssertionError('unnecessary body transfer')):
-                    status, _ = self.run_download(response)
-                self.assertEqual(status['archive']['phase'], 'unchanged')
-                self.assertEqual(status['archive']['bytes_downloaded'], 0)
+    def test_matching_strong_etag_on_200_skips_the_body(self):
+        headers = {'ETag': '"identical"'}
+        self.run_download(Response(self.payload, headers=headers))
+        response = Response(self.payload, headers=headers)
+        with patch.object(response, 'read1', side_effect=AssertionError('unnecessary body transfer')):
+            status, _ = self.run_download(response)
+        self.assertEqual(status['archive']['phase'], 'unchanged')
+        self.assertEqual(status['archive']['bytes_downloaded'], 0)
+
+    def assert_changed_200_is_merged(self, headers, condition):
+        from validator import validate_board
+
+        board = self.record['board'].copy()
+        board[17] ^= 1  # turn a single interior piece, preserving piece identity and frame
+        result = validate_board(board)
+        self.assertTrue(result['valid'])
+        replacement = dict(self.record, board=board, score=result['score'],
+                           breaks=result['break_count'], sha='a' * 64)
+        bodies = []
+        for record in (self.record, replacement):
+            # Store padded JSON without compression to guarantee equal gzip lengths.
+            lines = json.dumps(self.header) + '\n' + json.dumps(record).ljust(2048) + '\n'
+            bodies.append(gzip.compress(lines.encode(), compresslevel=0, mtime=0))
+        self.assertEqual(len(bodies[0]), len(bodies[1]))
+        self.assertNotEqual(*bodies)
+        headers = dict(headers, **{'Content-Length': str(len(bodies[0]))})
+        first, _ = self.run_download(Response(bodies[0], headers=headers))
+        self.assertEqual(first['archive']['new_boards'], 1)
+        second, calls = self.run_download(Response(bodies[1], headers=headers))
+        self.assertIn(condition, calls[0][3])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(second['archive']['phase'], 'complete')
+        self.assertEqual(second['archive']['bytes_downloaded'], len(bodies[1]))
+        self.assertEqual(second['archive']['new_boards'], 1)
+        self.assertEqual(second['known_exact_boards'], 2)
+        self.assertTrue(self.manager.is_known(board))
+
+    def test_changed_200_with_matching_modification_date_and_length(self):
+        self.assert_changed_200_is_merged({'Last-Modified': 'Tue, 24 Nov 2026 01:02:03 GMT'}, 'If-Modified-Since')
+
+    def test_changed_200_with_matching_weak_etag_and_length(self):
+        self.assert_changed_200_is_merged({'ETag': 'W/"generation"'}, 'If-None-Match')
 
     def test_identical_200_body_skips_validation_when_no_http_validator_exists(self):
         self.run_download(Response(self.payload))

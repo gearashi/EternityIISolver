@@ -148,14 +148,11 @@ class LibraryArchiveManager(LibraryMonitor):
                 raise ValueError(f'The archive server is limiting downloads (HTTP 429). {wait}')
             if response.status != 200:
                 raise ValueError(f'Archive server returned HTTP {response.status}; no redirect or retry was followed')
-            # Some file servers return 200 for a conditional GET. An identical
-            # entity tag still identifies the representation before we read it.
+            # A 200 can mean the server ignored the condition. Only a matching
+            # strong ETag identifies the bytes; dates and weak tags can repeat.
             etag = response.getheader('ETag')
             modified = response.getheader('Last-Modified')
-            if etag and etag == receipt.get('etag'):
-                return None, {}
-            if (not etag and not receipt.get('etag') and modified and modified == receipt.get('last_modified')
-                    and str(receipt.get('compressed_bytes')) == response.getheader('Content-Length')):
+            if etag and etag.startswith('"') and etag.endswith('"') and etag == receipt.get('etag'):
                 return None, {}
             mime = (response.getheader('Content-Type') or '').split(';', 1)[0].strip().lower()
             if mime not in ('application/gzip', 'application/x-gzip', 'application/octet-stream'):
