@@ -273,6 +273,24 @@ class SolverLifecycleTests(TemporaryStateTest):
         self.assertFalse(status['library']['network_enabled'])
         self.assertGreater(status['library']['known_exact_boards'], 0)
 
+    def test_gpu_worker_can_start_while_library_has_a_writer(self):
+        import sqlite3
+        from library_cache import LibraryMonitor
+        from app_paths import resource_root
+        directory = self.home/'library'
+        cache = LibraryMonitor(directory, pieces_path=resource_root()/'data/pieces.txt')
+        cache.close()
+        writer = sqlite3.connect(directory/'library.sqlite3')
+        try:
+            writer.execute('BEGIN IMMEDIATE')
+            args = ['--state-dir',str(self.home),'--no-dashboard','--replicas','32','--seconds','0']
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(0,self.solver.main(args,engine_factory=self.factory))
+            self.assertEqual('finished_bounded_run',self.saved_status()['state'])
+            self.assertIn('library_seed_warning',self.saved_status())
+        finally:
+            writer.close()
+
     def test_zero_duration_checkpoints_and_resumes_without_moves(self):
         previous_handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
         self.assertEqual(self.run_solver('--seconds', '0'), 0, self.saved_status())

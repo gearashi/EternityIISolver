@@ -263,6 +263,13 @@ class LibraryArchiveManager(LibraryMonitor):
             except OSError:
                 with self._lock:
                     self._job['cleanup_warning'] = 'A temporary archive could not be removed.'
+            # A solver may have published results while the merge held SQLite's
+            # writer slot. Its files also survive a shutdown before this pass.
+            try:
+                self.replay_local_results()
+            except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as exc:
+                with self._lock:
+                    self._last_error = self._last_error or f'Local board registration failed: {exc}'
             with self._lock:
                 self._active = False
                 self._network_active = False

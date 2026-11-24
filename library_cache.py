@@ -37,9 +37,27 @@ def board_bytes(board):
 def local_board_hash(board):
     return hashlib.sha256(board_bytes(board)).hexdigest()
 
+def database_busy(error):
+    # Extended result codes share the low byte with their primary result code.
+    return (getattr(error, 'sqlite_errorcode', 0) & 255) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+
+def queue_local_result(data_dir, record):
+    """Publish an immutable registration request before acknowledging the helper's board."""
+    pending = Path(data_dir) / 'pending-local'
+    pending.mkdir(parents=True, exist_ok=True)
+    request = pending / f"{record['sha256_uint16le']}.json"
+    if not request.exists():
+        temp = pending / f'.{uuid.uuid4().hex}.tmp'
+        try:
+            temp.write_text(json.dumps({'board': record['board'], 'score': record['score']}), encoding='utf-8')
+            os.replace(temp, request)
+        finally:
+            temp.unlink(missing_ok=True)
+    return request
+
 class LibraryMonitor:
     def __init__(self, data_dir, interval_seconds=900, *, pieces_path=None,
-                 request_timeout=20, detail_interval_seconds=1.0):
+                 request_timeout=20, detail_interval_seconds=1.0, db_timeout=5.0):
         self.data_dir=Path(data_dir);self.data_dir.mkdir(parents=True,exist_ok=True)
         self.interval_seconds=max(1,float(interval_seconds))
         self.request_timeout=float(request_timeout)
@@ -47,7 +65,7 @@ class LibraryMonitor:
         # Legacy timing arguments are accepted for existing callers/settings.
         # They do not enable polling, requests, or background work.
         self._lock=threading.RLock();self._thread=None
-        self._db=sqlite3.connect(self.data_dir/'library.sqlite3',check_same_thread=False)
+        self._db=sqlite3.connect(self.data_dir/'library.sqlite3',check_same_thread=False, timeout=db_timeout)
         self._closed=False
         self._db.execute('PRAGMA journal_mode=WAL')
         self._db.executescript('''
@@ -75,6 +93,8 @@ class LibraryMonitor:
         bootstrap=self.data_dir/'library-index.json'
         if not self._index_loaded() and bootstrap.is_file():
             self.ingest_index(json.loads(bootstrap.read_text(encoding='utf-8')))
+        if self._faces is not None:
+            self.replay_local_results()
 
     def _meta(self,key):
         row=self._db.execute('SELECT value FROM metadata WHERE key=?',(key,)).fetchone()
@@ -201,6 +221,31 @@ class LibraryMonitor:
                     'INSERT INTO boards(public_sha,score,has_content,active,local_sha,placement) VALUES(?,?,1,0,?,?)',
                     (key, score, digest, blob))
         return True if existing and existing[0] != key else None
+
+    def replay_local_results(self, marker=None):
+        """A single local pass on publication, after an archive job, or on reopening."""
+        pending = self.data_dir / 'pending-local'
+        markers = (marker,) if marker is not None else pending.glob('*.json')
+        for item in markers:
+            if not SHA_RE.fullmatch(item.stem):
+                raise ValueError('Invalid local board registration marker')
+            try:
+                with item.open('rb') as stream:
+                    payload = stream.read(131073)
+            except FileNotFoundError:
+                continue  # Another process committed and removed the same request.
+            if len(payload) > 131072:
+                raise ValueError('Local board result is oversized')
+            doc = json.loads(payload)
+            if local_board_hash(doc['board']) != item.stem:
+                raise ValueError('Local board does not match its registration marker')
+            try:
+                self.register_local_board(doc['board'], doc['score'])
+            except sqlite3.OperationalError as exc:
+                if database_busy(exc):
+                    return  # The archive holds the writer slot. Keep the durable marker.
+                raise
+            item.unlink(missing_ok=True)
 
     def is_known(self,board):
         """True=exact saved duplicate; False=absent in complete saved tier; None=unknown."""

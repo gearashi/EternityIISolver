@@ -331,18 +331,16 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                 return
             board = list(board)
             digest = hashlib.sha256(struct.pack('<256H', *board)).hexdigest()
-            if engine in FAST_ENGINES:
-                from library_cache import LibraryMonitor
-                if local_library is None:
-                    local_library = LibraryMonitor(home / 'library', pieces_path=bundle.data_dir / 'pieces.txt')
-                known = local_library.register_local_board(board, report['score'])
-            else:
-                known = _known_cached_board(home, board, digest)
+            known = _known_cached_board(home, board, digest)
             source = 'existing local library arrangement' if known else 'local search result; discovery status unverified'
             record = {'score': report['score'], 'board': board, 'validated': True, 'complete': report['complete'],
                       'library_known': known, 'source': source, 'sha256_uint16le': digest, 'found_at': _now(),
                       'search_method': 'exact-' + engine, 'scope': SCOPE,
                       'project_acceptance_confirmed': False, 'automatic_upload': False}
+            if engine in FAST_ENGINES:
+                from library_cache import LibraryMonitor, database_busy, queue_local_result
+                directory = home / 'library'
+                marker = queue_local_result(directory, record)
             (home / 'results').mkdir(exist_ok=True)
             destination = home / 'results' / f'{report["score"]}-{digest}.json'
             _atomic_json(destination, record)
@@ -353,6 +351,16 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                 best = board
                 status.update(best_score=report['score'], board_source=source, library_known=known)
             save_status()
+        if engine in FAST_ENGINES:
+            try:
+                if local_library is None:
+                    # Opening the cache also replays any older pending results.
+                    local_library = LibraryMonitor(directory, pieces_path=bundle.data_dir / 'pieces.txt', db_timeout=0)
+                else:
+                    local_library.replay_local_results(marker)
+            except sqlite3.OperationalError as exc:
+                if not database_busy(exc):
+                    raise
 
     def heartbeat_loop():
         nonlocal background_error

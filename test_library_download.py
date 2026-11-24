@@ -63,6 +63,63 @@ class ManualArchiveTests(unittest.TestCase):
         factory.assert_called_once_with(ARCHIVE_HOST, timeout=20)
         self.assertTrue(connection.closed)
         return self.manager.status(), calls
+
+    def test_fast_publication_during_merge_is_replayed_after_commit_and_restart(self):
+        import exact_worker
+        from library_cache import local_board_hash, queue_local_result
+        from manual_export import export_best
+        from validator import validate_board
+
+        self.manager.close()
+        directory = self.path / 'library'
+        pieces = resource_root() / 'data/pieces.txt'
+        self.manager = LibraryArchiveManager(directory, pieces_path=pieces)
+        entered, release = threading.Event(), threading.Event()
+        observe = self.manager._progress
+        def pause_merge(info):
+            observe(info)
+            if info.get('merged_boards') == 1:
+                entered.set()
+                if not release.wait(30):
+                    raise RuntimeError('Test did not release archive transaction')
+        board = list(self.record['board'])
+        board[17] = board[17] // 4 * 4 + (board[17] + 1) % 4
+        candidate = {'board': board, 'score': validate_board(board)['score']}
+        def publish(**kwargs):
+            kwargs['on_board'](candidate)
+            return {'outcome': 'timeout'}
+        calls = []
+        response = Connection(Response(self.payload), calls)
+        with patch('library_download.http.client.HTTPSConnection', return_value=response), \
+                patch.object(self.manager,'_progress',pause_merge):
+            self.assertTrue(self.manager.start_download())
+            try:
+                self.assertTrue(entered.wait(10))
+                with patch.object(exact_worker, 'peak_memory_mb', return_value=64):
+                    code = exact_worker.run_task(self.path,engine='fast-score',seconds=20,solver_factory=lambda _:publish)
+                self.assertEqual(0,code)
+                self.assertEqual(candidate['score'], export_best(self.path)['score'])
+                self.assertFalse(self.manager.is_known(board))
+                self.assertTrue(list((directory/'pending-local').glob('*.json')))
+            finally:
+                release.set()
+                self.manager._thread.join(15)
+        self.assertEqual(1, len(calls))
+        self.assertEqual('complete', self.manager.status()['archive']['phase'])
+        self.assertTrue(self.manager.is_known(board))
+        self.assertFalse(list((directory/'pending-local').glob('*.json')))
+        self.manager.close()
+        # Simulate shutdown after durable publication, before SQLite acknowledges
+        # it. Replaying an already committed result must also be idempotent.
+        queue_local_result(directory, dict(candidate,sha256_uint16le=local_board_hash(board)))
+        another = board.copy()
+        another[18] = another[18] // 4 * 4 + (another[18]+1) % 4
+        queue_local_result(directory, {'board':another, 'score':validate_board(another)['score'],
+                                       'sha256_uint16le':local_board_hash(another)})
+        self.manager = LibraryArchiveManager(directory,pieces_path=pieces)
+        self.assertEqual(3, self.manager.status()['known_exact_boards'])
+        self.assertTrue(self.manager.is_known(another))
+        self.assertFalse(list((directory/'pending-local').glob('*.json')))
     def test_constructor_status_and_legacy_start_do_not_connect(self):
         with patch('socket.socket.connect', side_effect=AssertionError('Network forbidden')), \
              patch('threading.Thread.start', side_effect=AssertionError('No automatic jobs')):

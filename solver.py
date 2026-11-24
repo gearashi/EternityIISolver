@@ -118,13 +118,24 @@ def main(argv=None,engine_factory=None):
             if not v['valid']:raise ValueError(f'Invalid seed: {file.name}')
             if doc['board'] not in seeds:seeds.append(doc['board'])
         if not a.no_library:
-            from library_cache import LibraryMonitor
-            monitor=LibraryMonitor(home/'library',pieces_path=ROOT/'data/pieces.txt')
+            from library_cache import LibraryMonitor, database_busy
+            try:
+                monitor=LibraryMonitor(home/'library',pieces_path=ROOT/'data/pieces.txt',db_timeout=0)
+            except sqlite3.OperationalError as exc:
+                if not database_busy(exc):
+                    raise
+                status['library_seed_warning']='Local library is busy; search is using the validated bundled seeds.'
             for file in [ROOT/'data/record466.json',*sorted((ROOT/'data/seeds').glob('*.json'))]:
+                if monitor is None:
+                    break
                 try:
                     doc=json.loads(file.read_text())
                     if 'board' in doc:monitor.register_known_document(doc,'2c037e70f7e93518a48733c7aacd096226b7f23728efabd6289088b91c0945cd' if file.name=='record466.json' else file.stem)
-                except Exception as e:status['library_seed_warning']=str(e)
+                except Exception as e:
+                    if isinstance(e,sqlite3.OperationalError) and database_busy(e):
+                        status['library_seed_warning']='Local library is busy; search is using the validated bundled seeds.'
+                        break
+                    status['library_seed_warning']=str(e)
             # The cache is local only; there is no polling/downloading worker.
         if engine_factory is None:
             from gpu_engine import create_engine
