@@ -3,13 +3,14 @@ import io
 import unittest
 import zipfile
 
-from cuda_bundle import CUDA_FILES, DISTRIBUTIONS, check_windows_cuda_archive
+from cuda_bundle import CUDA_FILES, DISTRIBUTIONS, SEARCH_KERNELS, check_windows_cuda_archive
 
 
 def archive_fixture(omit=None, move=None):
     data = io.BytesIO()
     recorded_header = "nvidia/cuda_runtime/include/vector_types.h"
     files = {p.replace(".*.pyd", ".cp312-win_amd64.pyd"): b"x" for p in CUDA_FILES}
+    files.update({name: b"// sample kernel" for name in SEARCH_KERNELS})
     files[recorded_header] = b"header"
     for dist in DISTRIBUTIONS:
         metadata = dist + "-1.dist-info/"
@@ -29,6 +30,11 @@ def archive_fixture(omit=None, move=None):
 class WindowsCudaArchiveTests(unittest.TestCase):
     def test_complete_archive(self):
         check_windows_cuda_archive(archive_fixture())
+
+    def test_missing_application_kernel_fails(self):
+        for path in ("kernels.cu", "fast_score.cu"):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, path):
+                check_windows_cuda_archive(archive_fixture(omit=path))
 
     def test_missing_or_flattened_component_fails(self):
         for path in ("cupy/_core/core.cp312-win_amd64.pyd", "cuda/pathfinder/__init__.py",

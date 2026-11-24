@@ -21,6 +21,7 @@ CUDA_FILES = (
     "nvidia/cuda_nvrtc/include/nvrtc.h",
 )
 DISTRIBUTIONS = ("cupy_cuda12x", "cuda_pathfinder", "nvidia_cuda_runtime_cu12", "nvidia_cuda_nvrtc_cu12")
+SEARCH_KERNELS = ("kernels.cu", "fast_score.cu")
 
 
 def missing_windows_cuda_file(root):
@@ -37,7 +38,8 @@ def check_windows_cuda_archive(path):
     with zipfile.ZipFile(path) as archive:
         files = {entry.filename.removeprefix(prefix): entry for entry in archive.infolist()
                  if entry.filename.startswith(prefix) and not entry.is_dir()}
-        missing = [p for p in CUDA_FILES if not any(fnmatchcase(n, p) and f.file_size for n, f in files.items())]
+        missing = [p for p in CUDA_FILES + SEARCH_KERNELS
+                   if not any(fnmatchcase(n, p) and f.file_size for n, f in files.items())]
         for dist in DISTRIBUTIONS:
             records = [n for n in files if fnmatchcase(n, dist + "-*.dist-info/RECORD")]
             if len(records) != 1:
