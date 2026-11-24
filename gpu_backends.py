@@ -58,24 +58,34 @@ def default_cache_dir() -> Path:
     return base / 'EternityIISolver' / 'kernels'
 
 
+def open_cuda(cache_directory):
+    """Locate the driver and wheel libraries for any CUDA engine in this worker."""
+    stage = 'preparing the CUDA environment'
+    try:
+        cache_directory.mkdir(parents=True, exist_ok=True)
+        os.environ['CUPY_CACHE_DIR'] = str(cache_directory)
+        if sys.platform == 'win32':
+            _check_windows_cuda_setup()
+        import cupy as cp
+        stage = 'opening the GPU'
+        if cp.cuda.runtime.getDeviceCount() < 1:
+            raise BackendUnavailable('The NVIDIA display driver reported no CUDA-capable GPU. Check that the GPU is enabled.')
+        return cp
+    except BackendUnavailable:
+        raise
+    except Exception as exc:
+        raise BackendUnavailable(_cuda_problem(exc, stage)) from exc
+
+
 class CudaBackend:
     name = 'cuda'
     diagnostic_cpu = False
 
     def __init__(self, cache_dir: Path):
-        directory = cache_dir / 'cuda'
-        stage = 'preparing the CUDA environment'
+        cp = open_cuda(cache_dir / 'cuda')
+        stage = 'compiling the CUDA search kernels'
         try:
-            directory.mkdir(parents=True, exist_ok=True)
-            os.environ['CUPY_CACHE_DIR'] = str(directory)
-            if sys.platform == 'win32':
-                _check_windows_cuda_setup()
-            import cupy as cp
-            stage = 'opening the GPU'
-            if cp.cuda.runtime.getDeviceCount() < 1:
-                raise BackendUnavailable('The NVIDIA display driver reported no CUDA-capable GPU. Check that the GPU is enabled.')
             self.xp = cp
-            stage = 'compiling the CUDA search kernels'
             self.module = cp.RawModule(code=(ROOT / 'kernels.cu').read_text(encoding='utf-8'),
                                        options=('--std=c++17',),
                                        name_expressions=('search_moves', 'test_delta', 'score_boards'))

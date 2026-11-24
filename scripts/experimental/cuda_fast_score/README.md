@@ -1,6 +1,6 @@
 # CUDA fast-score experiment
 
-From the repository root, run the experiment using the Windows source CUDA environment:
+The dashboard's **Advanced search → CUDA fast-score** and the CLI's `exact --engine cuda-fast-score` use the same search core as this benchmark. To save timing details in a separate directory, run this command from the repository root using the Windows source CUDA environment.
 
 ```powershell
 .venv-cuda\Scripts\python.exe scripts\experimental\cuda_fast_score\cuda_fast_score.py --repo . --out cuda-trial --seed 20261124 --lanes 2048 --seconds 60

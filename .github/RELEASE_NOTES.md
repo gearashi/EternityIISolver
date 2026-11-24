@@ -5,3 +5,5 @@ The Windows CUDA build checks the finished ZIP for the CuPy extensions, CUDA run
 The local library shows how many records it validated and merged, saves the result in the library database and restores it when the dashboard reopens. A manual refresh makes one conditional request when the archive server provides validators. A matching snapshot skips board validation and the board merge. Slow transfers can continue while bytes are arriving. An HTTP rate limit appears in the panel.
 
 Fast search saves validated run boards below the bundled reference. The board view and manual export can show the run's result while retaining the higher saved record.
+
+Advanced search now includes experimental CUDA fast-score for NVIDIA GPUs. It starts fresh with 2,048 search lanes and stores each validated result in the local library. The dashboard and Export best use the highest score found in the run.

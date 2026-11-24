@@ -60,6 +60,7 @@ EternityIISolver start --method exact --exact-engine dfs --workers 1
 EternityIISolver run --method exact --exact-engine cp-sat --workers 1 --seconds 60
 EternityIISolver exact --engine sat --workers 1 --seconds 60
 EternityIISolver start --method exact --exact-engine fast-score --workers 4
+EternityIISolver exact --engine cuda-fast-score --seconds 60
 EternityIISolver exact --engine fast-dfs --workers 4 --seconds 3600
 EternityIISolver start --method exact --exact-engine hybrid --backend auto --replicas 4096
 EternityIISolver exact --engine hybrid --backend auto --replicas 4096 --seconds 60

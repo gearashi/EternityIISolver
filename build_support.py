@@ -2,7 +2,7 @@
 from pathlib import Path
 
 PUBLIC_RESOURCES = (
-    "pyproject.toml", "Dashboard.html", "kernels.cu", "kernels.cl",
+    "pyproject.toml", "Dashboard.html", "kernels.cu", "kernels.cl", "fast_score.cu",
     "data/pieces.txt", "data/puzzle.json", "data/record466.json",
     "data/catalog.json", "data/catalog.csv",
     "data/seeds/8d5630eb81a7bc5f1a2b0318c3cd0f13ffc6ca14dc8db157234c71fd1418e7fb.json",

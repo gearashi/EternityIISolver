@@ -33,10 +33,11 @@ MEMORY_SOFT_LIMIT_MB = 2048.0
 FULL_BOARD_REGION_WORK = 10_000_000
 UNBOUNDED_SECONDS = 1.0e12  # Finite native API horizon, approximately 31,688 years.
 SCOPE = 'full-16x16-five-clue-puzzle-all-480-edges'
-ENGINES = ('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs', 'fast-dfs', 'fast-score')
-REPAIR_ENGINES = ('optimize', 'core-repair', 'matching', 'sat-optimize', 'gpu-matching', 'fast-score')
+ENGINES = ('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs', 'fast-dfs', 'fast-score', 'cuda-fast-score')
+REPAIR_ENGINES = ('optimize', 'core-repair', 'matching', 'sat-optimize', 'gpu-matching', 'fast-score', 'cuda-fast-score')
 # Compiled helper engines: fast-dfs is an exhaustive all-480 search, fast-score a high-score heuristic.
 FAST_ENGINES = ('fast-dfs', 'fast-score')
+PUBLISHED_BOARD_ENGINES = FAST_ENGINES + ('cuda-fast-score',)
 FAST_MAX_WORKERS = 64
 DEFAULT_SEED = 20261007
 
@@ -92,6 +93,8 @@ def _backend(engine):
         from smart_repair import solve
     elif engine == 'partitioned':
         from exact_parallel import solve
+    elif engine == 'cuda-fast-score':
+        from cuda_score_search import solve
     elif engine in FAST_ENGINES:
         from fast_search import solve
     else:
@@ -109,6 +112,8 @@ def _settings(engine, seconds, seed, workers, port, backend='auto', replicas=409
         raise ValueError('seed must be a uint32 integer')
     if type(workers) is not int or not 1 <= workers <= (FAST_MAX_WORKERS if engine in FAST_ENGINES else 4 if engine in ('cp-sat', 'optimize', 'partitioned') else 1):
         raise ValueError('CP-SAT, optimization and partitioned DFS permit one to four workers; fast compiled search permits 1 to 64; other CPU engines require one')
+    if engine == 'cuda-fast-score' and backend == 'opencl':
+        raise ValueError('CUDA fast-score requires the NVIDIA CUDA backend')
     if pruning not in PRUNING_PROFILES:
         raise ValueError('Unknown DFS pruning profile')
     validate_pivot_engine(pruning, engine, workers)
@@ -221,7 +226,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
               'port': port, 'state_dir': str(home), 'start_time': _now(),
               'last_update': _now(), 'elapsed_seconds': 0.0, 'best_score': None,
               'source_best_score': 466, 'branches': 0, 'conflicts': 0,
-              'exact_counters_available': engine in ('dfs', 'hybrid', 'partitioned') + FAST_ENGINES,
+              'exact_counters_available': engine in ('dfs', 'hybrid', 'partitioned') + PUBLISHED_BOARD_ENGINES,
               'pruning': pruning, 'repair_quality': repair_quality, 'neighborhoods': 0, 'recombinations': 0,
               'diversification_attempts': 0, 'diversifications': 0, 'tabu_rejections': 0,
               'region_calls': 0, 'region_improvements': 0, 'region_seconds': 0.0, 'parent_count': 0,
@@ -234,6 +239,11 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
     if engine in ('matching', 'gpu-matching'):
         status.update(branches=None, conflicts=None,
                       counter_semantics='completed repair neighborhoods, recombinations, diversifications and region searches; not exhaustive branches or BOINC credit')
+    if engine == 'cuda-fast-score':
+        from cuda_score_search import LANES
+        status.update(backend='cuda', compute_device='NVIDIA CUDA', gpu='NVIDIA CUDA', gpu_lanes=LANES,
+                      resume_capability='fresh GPU search on each start',
+                      counter_semantics='accepted GPU piece placements under a heuristic mismatch budget')
     session = {'schema_version': 1, 'settings': settings, 'started_at': status['start_time'],
                'scope': SCOPE, 'external_network_enabled': False}
 
@@ -306,7 +316,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             for key in ('component_counters_session','rule_counters_session','reasoning_counters_session'):
                 if isinstance(progress.get(key),dict):
                     status[key]={k:v for k,v in progress[key].items() if isinstance(k,str) and type(v) in (int,float) and math.isfinite(v) and v>=0}
-            for key in ('cost_backend', 'cost_device'):
+            for key in ('cost_backend', 'cost_device', 'gpu'):
                 if isinstance(progress.get(key), str):
                     status[key] = progress[key][:160]
             phase = progress.get('phase')
@@ -327,7 +337,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
             raise RuntimeError('Repair candidate failed independent board and score validation')
         with guard:
             promotes_global = report['score'] > status['best_score']
-            if not promotes_global and engine not in FAST_ENGINES:
+            if not promotes_global and engine not in PUBLISHED_BOARD_ENGINES:
                 return
             board = list(board)
             digest = hashlib.sha256(struct.pack('<256H', *board)).hexdigest()
@@ -337,21 +347,21 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                       'library_known': known, 'source': source, 'sha256_uint16le': digest, 'found_at': _now(),
                       'search_method': 'exact-' + engine, 'scope': SCOPE,
                       'project_acceptance_confirmed': False, 'automatic_upload': False}
-            if engine in FAST_ENGINES:
+            if engine in PUBLISHED_BOARD_ENGINES:
                 from library_cache import LibraryMonitor, database_busy, queue_local_result
                 directory = home / 'library'
                 marker = queue_local_result(directory, record)
             (home / 'results').mkdir(exist_ok=True)
             destination = home / 'results' / f'{report["score"]}-{digest}.json'
             _atomic_json(destination, record)
-            if engine == 'fast-score' and report['score'] > status.get('run_best_score', -1):
+            if engine in ('fast-score', 'cuda-fast-score') and report['score'] > status.get('run_best_score', -1):
                 status.update(run_best_score=report['score'], run_best_sha256=digest)
             if promotes_global:
                 _atomic_json(runtime / 'best.json', record)
                 best = board
                 status.update(best_score=report['score'], board_source=source, library_known=known)
             save_status()
-        if engine in FAST_ENGINES:
+        if engine in PUBLISHED_BOARD_ENGINES:
             try:
                 if local_library is None:
                     # Opening the cache also replays any older pending results.
@@ -448,7 +458,9 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                 solve_args['queue_path'] = queue_path
                 status['resumed'] = queue_path.exists()
                 status['resume_capability'] = 'explicit partition queue with per-task DFS frontiers'
-            if engine in REPAIR_ENGINES:
+            if engine == 'cuda-fast-score':
+                solve_args.update(on_improvement=on_improvement, cache_dir=runtime / 'gpu-cache' / 'cuda')
+            elif engine in REPAIR_ENGINES:
                 solve_args.update(reference=list(best), on_improvement=on_improvement)
                 status['resume_capability'] = 'saved best board only; starts a fresh repair search'
                 if engine in ('matching', 'gpu-matching'):

@@ -5,13 +5,10 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import time
-
-from cuda_fast_score import Search
-
 
 def check(args, case, size, clues, profile, budget):
     import numpy as np
+    from cuda_score_search import Search
     from exact_model import generated_problem
     from fast_search import _piece_text, _profile_arguments, score_board
     problem, _ = generated_problem(size, 4, 13, clue_count=clues)

@@ -1,7 +1,7 @@
 include README.md LICENSE THIRD_PARTY_NOTICES.md DATA_PROVENANCE.md
 include pyproject.toml setup.py build_support.py EternityIISolver.spec
 include requirements*.txt
-include Dashboard.html kernels.cu kernels.cl
+include Dashboard.html kernels.cu kernels.cl fast_score.cu
 include test_*.py
 include exact_preprocess.py hall_replay.py inventory_parity.py perfect_cut_sat.py
 include repair_plateau.py residual_rotations.py uip_dfs.py weighted_cost_search.py

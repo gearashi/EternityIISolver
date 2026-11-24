@@ -149,13 +149,13 @@ def displayed_candidate(home):
         status = _read_document(runtime / 'status.json')
     except FileNotFoundError:
         status = {}
-    if status.get('exact_engine') == 'fast-score':
+    if status.get('exact_engine') in ('fast-score', 'cuda-fast-score'):
         score, digest = status.get('run_best_score'), status.get('run_best_sha256')
         if type(score) is int and 0 <= score <= 480 and isinstance(digest, str) and re.fullmatch('[a-f0-9]{64}', digest):
             return _read_document(home / 'results' / f'{score}-{digest}.json'), 'run_best'
         # A pre-upgrade run can already have a valid helper board on disk.
         score = status.get('engine_best_score')
-        if type(score) is int and 0 <= score <= 480:
+        if status.get('exact_engine') == 'fast-score' and type(score) is int and 0 <= score <= 480:
             candidate = _read_document(runtime / 'fast-score' / 'best.json')
             if candidate.get('claimed_score') != score:
                 raise ExportError('Saved fast-search board differs from its reported score')

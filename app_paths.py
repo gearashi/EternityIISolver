@@ -4,6 +4,14 @@ from pathlib import Path
 import sys
 
 
+def dependency_setup_hint():
+    if getattr(sys, 'frozen', False):
+        return 'Extract the complete release zip into a fresh folder.'
+    if sys.platform == 'win32':
+        return r'From the source folder run scripts\setup_windows_cuda.cmd.'
+    return 'Install the source dependencies in your active Python environment.'
+
+
 def resource_root():
     if getattr(sys, 'frozen', False):
         return Path(sys._MEIPASS)

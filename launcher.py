@@ -42,7 +42,7 @@ def parser():
         command.add_argument('--state-dir', type=Path, help='Folder for checkpoints, cache, logs and results')
         if name in ('start', 'run'):
             command.add_argument('--method', choices=('gpu', 'exact'), default='gpu')
-            command.add_argument('--exact-engine', choices=('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs', 'fast-dfs', 'fast-score'), default='dfs')
+            command.add_argument('--exact-engine', choices=('dfs', 'sat', 'sat-channels', 'cp-sat', 'hybrid', 'optimize', 'core-repair', 'matching', 'partitioned', 'sat-optimize', 'gpu-matching', 'learning-dfs', 'learning-rules', 'regional-master', 'refined-dd', 'impact-dfs', 'fast-dfs', 'fast-score', 'cuda-fast-score'), default='dfs')
             command.add_argument('--workers', type=int, default=1, help='CPU workers (1; CP-SAT, optimization and partitioned DFS support up to 4; fast-dfs and fast-score up to 64)')
             command.add_argument('--gpu-repair-batch', type=int, default=16, help='GPU matching neighborhoods per batch1..64')
             command.add_argument('--repair-quality', choices=('baseline','guided','guided-lift','bounded','learned','partition-bounds','price-bounds'), default='baseline')
@@ -91,6 +91,8 @@ def run_arguments(args):
             result.append('--fresh-exact')
         if args.exact_engine == 'gpu-matching':
             result.extend(['--backend', args.backend, '--gpu-repair-batch', str(args.gpu_repair_batch)])
+        if args.exact_engine == 'cuda-fast-score':
+            result.extend(['--backend', args.backend])
         if args.exact_engine == 'hybrid':
             result.extend(['--backend', args.backend, '--replicas', str(args.replicas)])
         if args.seconds is not None:

@@ -59,7 +59,7 @@ python scripts/benchmark_fast_search.py --workers 4 --strict-seconds 60 --score-
 
 - The engines apply none of the matching, capacity or inventory proofs of the Python DFS profiles. They trade pruning for speed.
 - Checkpoints belong to one seed and one set of settings. `fast-dfs` also needs the same worker count, because the threads divide one tree. Use **Restart saved fast search** (or `--fresh-exact`) to archive the saved search and begin again.
-- The helper runs on the CPU. There is no GPU version of this search; the GPU settings do not affect it.
+- The native helper runs on the CPU. **CUDA fast-score (experimental, fresh start)** uses NVIDIA CUDA and 2,048 independent GPU lanes. Each click of Start begins a fresh score ladder. Stop saves completed boards. The GPU search accepts the same break schedule, fixed clues, frame constraints and depletion rules as the CPU score search. Its worker validates each returned board, registers it locally and exposes the run best through the dashboard and manual export. Start it from Advanced search or run `EternityIISolver exact --engine cuda-fast-score --seconds 60`.
 - More workers than CPU cores slows the search down.
 - The app's 2 GiB memory limit is not a concern here: the helper uses a few megabytes per thread.
 

@@ -100,13 +100,8 @@ def main(argv=None,engine_factory=None):
         try:
             import numpy as np
         except ImportError as exc:
-            if getattr(sys, 'frozen', False):
-                action = 'Extract the complete release zip into a fresh folder.'
-            elif sys.platform == 'win32':
-                action = r'From the source folder run scripts\setup_windows_cuda.cmd.'
-            else:
-                action = 'Install the source dependencies in your active Python environment.'
-            raise RuntimeError(f'NumPy could not load ({exc}). {action}') from exc
+            from app_paths import dependency_setup_hint
+            raise RuntimeError(f'NumPy could not load ({exc}). {dependency_setup_hint()}') from exc
         if not a.no_dashboard:
             try:server=ThreadingHTTPServer(('127.0.0.1',a.port),Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
             except OSError as e:raise RuntimeError(f'Cannot open local dashboard port {a.port}; search was not started: {e}') from e
