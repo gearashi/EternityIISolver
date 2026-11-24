@@ -241,4 +241,20 @@ class ManualArchiveTests(unittest.TestCase):
         self.assertEqual(self.manager.status()['archive']['phase'], 'complete')
         self.assertIsNone(self.manager.status()['archive']['error'])
 
+    def test_continuing_download_can_outlast_the_original_ten_minute_cutoff(self):
+        # Scale the byte milestone to this small real gzip and advance a fake clock.
+        from types import SimpleNamespace
+        clock = SimpleNamespace(now=0)
+        class SlowResponse(Response):
+            def read1(self, size):
+                clock.now += 10  # steady progress inside the socket's 20-second idle timeout
+                return super().read1(min(size, 8))
+        with patch('library_download.time', SimpleNamespace(monotonic=lambda: clock.now, time=lambda: 0)), \
+             patch('library_download.PROGRESS_BYTES', 32):
+            status, calls = self.run_download(SlowResponse(self.payload))
+        self.assertGreater(clock.now, 600)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(status['archive']['phase'], 'complete', status)
+        self.assertEqual(status['known_exact_boards'], 1)
+
 if __name__=='__main__':unittest.main(verbosity=2)

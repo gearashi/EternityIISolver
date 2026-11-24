@@ -24,7 +24,8 @@ ARCHIVE_PATH = '/library/archive'
 MAX_COMPRESSED = 1024 * 1024 * 1024
 READ_CHUNK = 128 * 1024
 REQUEST_TIMEOUT = 20
-DOWNLOAD_DEADLINE = 600
+PROGRESS_WINDOW = 600
+PROGRESS_BYTES = 1024 * 1024
 
 
 class _DownloadCancelled(Exception):
@@ -115,7 +116,8 @@ class LibraryArchiveManager(LibraryMonitor):
     def _download(self, destination, receipt):
         self._check_cancel()
         connection = http.client.HTTPSConnection(ARCHIVE_HOST, timeout=REQUEST_TIMEOUT)
-        deadline = time.monotonic() + DOWNLOAD_DEADLINE
+        deadline = time.monotonic() + PROGRESS_WINDOW
+        checkpoint = 0
         digest = hashlib.sha256()
         with self._lock:
             self._connection = connection
@@ -173,7 +175,7 @@ class LibraryArchiveManager(LibraryMonitor):
                     self._check_cancel()
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        raise TimeoutError('Archive download exceeded ten minutes')
+                        raise TimeoutError('Archive download made less than 1 MiB of progress in ten minutes')
                     if connection.sock is not None:
                         connection.sock.settimeout(min(REQUEST_TIMEOUT, remaining))
                     block = response.read1(min(READ_CHUNK, MAX_COMPRESSED - received + 1))
@@ -184,6 +186,9 @@ class LibraryArchiveManager(LibraryMonitor):
                         raise ValueError('Compressed archive exceeds 1 GiB')
                     output.write(block)
                     digest.update(block)
+                    if received - checkpoint >= PROGRESS_BYTES:
+                        checkpoint = received
+                        deadline = time.monotonic() + PROGRESS_WINDOW
                     with self._lock:
                         self._job['bytes_downloaded'] = received
             if length is not None and received != length:

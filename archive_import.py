@@ -128,6 +128,8 @@ def _prepare(snapshot, stage_path, bundle, cancel, progress):
     rows = expanded = 0
     eof = object()
     with closing(sqlite3.connect(stage_path)) as stage, gzip.open(snapshot, 'rb') as stream:
+        # Keep the public-ID index of a large snapshot hot during random inserts.
+        stage.execute('PRAGMA cache_size=-65536')
         # This unique scratch DB is rebuilt on each attempt. Only the live library needs
         # durable transactions. Avoid journaling a growing staging index for every batch.
         stage.execute('PRAGMA journal_mode=OFF')

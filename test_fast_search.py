@@ -4,6 +4,7 @@ The real-helper tests build scripts/fast_dfs.cpp when no helper is present and
 a C++17 compiler is available; otherwise they are skipped.
 """
 import ast
+from collections import Counter
 from dataclasses import replace
 import functools
 import hashlib
@@ -146,15 +147,27 @@ class RealHelperTests(TemporaryState):
         helper = self.need_helper()
         seen = set()
         for seed in range(12):
-            problem, answer = generated_problem(4 + seed % 2, 3 + seed % 3, 100 + seed, clue_count=seed % 3)
-            if seed % 2:  # usually impossible: one inner side of one free piece changes color
+            # Keep one small exhausted Python oracle alongside the larger native cases.
+            size, clues = (3, 0) if seed == 1 else (4 + seed % 2, seed % 3)
+            problem, answer = generated_problem(size, 3 + seed % 3, 100 + seed, clue_count=clues)
+            expected = 'solved'
+            if seed % 2:
                 piece = next(p for p in range(len(answer)) if p not in {s // 4 for s in problem.fixed.values()}
                              and 0 not in problem.faces[4 * p])
                 base = list(problem.faces[4 * piece]); base[0] = base[0] % (3 + seed % 3) + 1
                 faces = list(problem.faces)
                 faces[4 * piece:4 * piece + 4] = [tuple(base[(side - r) % 4] for side in range(4)) for r in range(4)]
                 problem = make_problem(problem.size, faces, problem.fixed)
-            expected = reference_solve(problem, seconds=60, seed=1)['outcome']
+                # Only gray may face outward. Every non-gray side must be
+                # paired with another of its color, regardless of rotation.
+                counts = Counter(color for face in problem.faces[::4] for color in face if color)
+                self.assertEqual(2, sum(n % 2 for n in counts.values()), seed)
+                expected = 'infeasible'
+            if expected == 'solved' or seed == 1:
+                reference = reference_solve(problem, seconds=60, seed=1)
+                self.assertEqual(expected, reference['outcome'], seed)
+                if expected == 'solved':
+                    self.assertTrue(check_solution(problem, reference['board']))
             state = self.home / f'strict-{seed}'
             result = fast_search.solve(problem, 60, seed=seed, workers=1 + seed % 3, state_dir=state, helper=helper, prefix=2 + seed % 3)
             self.assertEqual(expected, result['outcome'], seed)
