@@ -6,8 +6,10 @@ only for the fixed gzip URL; there is no polling, retry loop or per-board route.
 from __future__ import annotations
 import hashlib
 import http.client
+import json
 from pathlib import Path
 import socket
+import sqlite3
 import threading
 import time
 import uuid
@@ -43,6 +45,17 @@ class LibraryArchiveManager(LibraryMonitor):
         self._closed_status = None
         self._requests = 0
         self._job = self._idle_job()
+        receipt = self._receipt()
+        if receipt:
+            self._job.update(phase='complete' if 'new_boards' in receipt else 'saved', **receipt)
+        failure = json.loads(self._meta('last_archive_failure') or '{}')
+        if failure:
+            self._job.update(failure)
+            self._last_error = failure['error']
+
+    def _receipt(self):
+        with self._lock:
+            return json.loads(self._meta('last_archive_import') or '{}')
 
     @staticmethod
     def _idle_job():
@@ -99,7 +112,7 @@ class LibraryArchiveManager(LibraryMonitor):
         if self._cancel.is_set():
             raise _DownloadCancelled()
 
-    def _download(self, destination):
+    def _download(self, destination, receipt):
         self._check_cancel()
         connection = http.client.HTTPSConnection(ARCHIVE_HOST, timeout=REQUEST_TIMEOUT)
         deadline = time.monotonic() + DOWNLOAD_DEADLINE
@@ -113,14 +126,35 @@ class LibraryArchiveManager(LibraryMonitor):
                 self._requests += 1
             # Direct TLS socket: certificate verification, no proxy/cookie/auth
             # handling and no automatic redirects. The body and query are absent.
-            connection.request('GET', ARCHIVE_PATH, body=None, headers={
+            headers = {
                 'Accept': 'application/gzip, application/octet-stream',
                 'Accept-Encoding': 'identity',
-                'User-Agent': 'EternityIISolver-archive-reader/0.2.2',
-            })
+                'User-Agent': 'EternityIISolver-archive-reader',
+            }
+            if receipt.get('etag'):
+                headers['If-None-Match'] = receipt['etag']
+            if receipt.get('last_modified'):
+                headers['If-Modified-Since'] = receipt['last_modified']
+            connection.request('GET', ARCHIVE_PATH, body=None, headers=headers)
             response = connection.getresponse()
+            if response.status == 304 and ('If-None-Match' in headers or 'If-Modified-Since' in headers):
+                return None, {}
+            if response.status == 429:
+                delay = response.getheader('Retry-After')
+                wait = (f'Try again after {delay} seconds.' if delay and delay.isdecimal() else
+                        f'Try again after {delay}.' if delay else 'Try again later.')
+                raise ValueError(f'The archive server is limiting downloads (HTTP 429). {wait}')
             if response.status != 200:
                 raise ValueError(f'Archive server returned HTTP {response.status}; no redirect or retry was followed')
+            # Some file servers return 200 for a conditional GET. An identical
+            # entity tag still identifies the representation before we read it.
+            etag = response.getheader('ETag')
+            modified = response.getheader('Last-Modified')
+            if etag and etag == receipt.get('etag'):
+                return None, {}
+            if (not etag and not receipt.get('etag') and modified and modified == receipt.get('last_modified')
+                    and str(receipt.get('compressed_bytes')) == response.getheader('Content-Length')):
+                return None, {}
             mime = (response.getheader('Content-Type') or '').split(';', 1)[0].strip().lower()
             if mime not in ('application/gzip', 'application/x-gzip', 'application/octet-stream'):
                 raise ValueError('Expected a gzip archive response')
@@ -157,7 +191,8 @@ class LibraryArchiveManager(LibraryMonitor):
             if received == 0:
                 raise ValueError('Archive response is empty')
             self._check_cancel()
-            return digest.hexdigest()
+            return digest.hexdigest(), {
+                'etag': etag, 'last_modified': modified}
         finally:
             connection.close()
             with self._lock:
@@ -169,7 +204,7 @@ class LibraryArchiveManager(LibraryMonitor):
             phase = value.get('phase')
             if phase in ('validating', 'merging'):
                 self._job['phase'] = phase
-            for key in ('validated_boards', 'total_boards'):
+            for key in ('validated_boards', 'total_boards', 'merged_boards'):
                 count = value.get(key)
                 if type(count) is int and count >= 0:
                     self._job[key] = count
@@ -177,11 +212,22 @@ class LibraryArchiveManager(LibraryMonitor):
     def _run(self):
         pending = self.data_dir / ('.archive-download-' + uuid.uuid4().hex + '.jsonl.gz.part')
         try:
-            expected_digest = self._download(pending)
+            receipt = self._receipt()
+            expected_digest, validators = self._download(pending, receipt)
+            self._check_cancel()
+            if expected_digest is None or expected_digest == receipt.get('archive_sha256'):
+                with self._lock, self._db:
+                    if expected_digest and validators and self._receipt() == receipt:
+                        receipt = dict(receipt, **validators, compressed_bytes=self._job['bytes_downloaded'])
+                        self._put_meta('last_archive_import', json.dumps(receipt))
+                    self._db.execute("DELETE FROM metadata WHERE key='last_archive_failure'")
+                    self._job.update(receipt)
+                    self._job.update(phase='unchanged', new_boards=0, already_cached=receipt['validated_boards'])
+                return
             self._progress({'phase': 'validating'})
             result = import_archive(pending, self.data_dir, pieces_path=self._pieces_path,
                                     should_cancel=self._cancel.is_set, on_progress=self._progress,
-                                    expected_sha256=expected_digest)
+                                    expected_sha256=expected_digest, http_validators=validators)
             if result['archive_sha256'] != expected_digest:
                 raise ValueError('Downloaded archive hash changed during import')
             with self._lock:
@@ -200,6 +246,12 @@ class LibraryArchiveManager(LibraryMonitor):
                 else:
                     self._last_error = ('Archive update failed: ' + str(exc))[:500]
                     self._job.update(phase='error', error=self._last_error)
+                    try:
+                        with self._db:
+                            self._put_meta('last_archive_failure', json.dumps(self._job | {'running': False}))
+                    except sqlite3.Error:
+                        # A read-only or full disk can also prevent saving the error.
+                        pass
         finally:
             try:
                 pending.unlink(missing_ok=True)

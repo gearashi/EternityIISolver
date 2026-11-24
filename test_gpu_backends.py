@@ -4,13 +4,29 @@ from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch
-from gpu_backends import BackendUnavailable, make_backend
+from gpu_backends import BackendUnavailable, _check_windows_cuda_setup, _cuda_problem, make_backend
 from kernel_port import to_opencl, verified_opencl_source
 
 ROOT = Path(__file__).resolve().parent
 
 
 class BackendSelectionTests(unittest.TestCase):
+    def test_missing_driver_names_the_display_driver(self):
+        with patch('ctypes.WinDLL', create=True, side_effect=FileNotFoundError('nvcuda.dll')):
+            with self.assertRaisesRegex(BackendUnavailable, 'Missing NVIDIA display driver'):
+                _check_windows_cuda_setup()
+
+    def test_missing_bundle_file_is_not_reported_as_a_driver_failure(self):
+        with patch.object(sys, 'frozen', True, create=True), patch.object(sys, '_MEIPASS', ROOT, create=True):
+            with self.assertRaisesRegex(BackendUnavailable, 'Missing CUDA release file.*cuda-opencl zip'):
+                _check_windows_cuda_setup()
+
+    def test_error_reports_the_stage_or_specific_remedy(self):
+        self.assertIn('compiling', _cuda_problem(RuntimeError('NVRTC compile failed'), 'compiling kernels'))
+        self.assertNotIn('driver', _cuda_problem(PermissionError('access denied'), 'cache'))
+        with patch.object(sys, 'frozen', True, create=True):
+            self.assertIn('Extract the complete', _cuda_problem(ImportError('missing CuPy'), 'loading'))
+
     def test_import_does_not_require_gpu_packages(self):
         import gpu_engine
         self.assertTrue(callable(gpu_engine.create_engine))

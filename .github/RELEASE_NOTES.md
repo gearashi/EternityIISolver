@@ -1,15 +1,7 @@
-Version **0.6.1** adds a compiled search core and two engines that use it. Both run offline on the CPU with the five clues fixed, use one thread per worker (up to 64), and continue from their checkpoints after Stop.
+# Version 0.6.2
 
-- **Fast compiled search for the highest score** looks for complete boards with as many matching edges as possible. It allows a limited number of mismatching edges late in the board, uses up three colors early, and restarts with new random orders. Each complete board it finds tightens the allowance, so the next one must score higher.
-- **Fast compiled DFS for all 480** is a plain exhaustive search. Its workers split one search tree, so no branch is searched twice.
+The Windows CUDA build checks the finished ZIP for the CuPy extensions, CUDA runtime, NVRTC, headers and wheel metadata. When CUDA startup fails, the worker reports the missing component in the dashboard. The ZIP includes its own Python. For a Windows source checkout with Python 3.15, run `scripts\setup_windows_cuda.cmd` to install the CUDA dependencies with a compatible private interpreter.
 
-| Bounded test, four threads | Time | Pieces tried | Result |
-| --- | ---: | ---: | --- |
-| Fast compiled DFS | 60 s | 14.1 billion | Deepest placement 200 of 256; no solution |
-| Fast compiled score search | 1,500 s | 358.5 billion | Complete boards of 459 (1 s), 460 (344 s) and 461 (1,191 s) |
+The local library shows how many records it validated and merged, saves the result in the library database and restores it when the dashboard reopens. A manual refresh makes one conditional request when the archive server provides validators. A matching snapshot skips board validation and SQLite writes. An HTTP rate limit appears in the panel.
 
-The engines try about 235 million pieces per second on four threads of a 2.1 GHz cloud processor. They apply none of the Python DFS pruning rules, so the speed does not make the puzzle tractable. Neither engine solved the puzzle, and the score search stayed below the verified **466/480** reference in this test. Each further point took several times longer than the one before. Every board is re-scored from the piece list and validated before it can replace your saved best.
-
-To try it, select **Advanced search → Fast compiled search for the highest score**, choose one worker per CPU core and press Start. Your saved best board, exports and other saved searches are kept. [How it works, measurements and limits](https://github.com/gearashi/EternityIISolver/blob/v0.6.1/docs/FAST_SEARCH.md)
-
-Version 0.6.0 was tagged but never released. Its Windows build check found that the compiled search could lose its final report when the app read the status file at the same moment, which ended the run with an error. On Windows the search now waits for the reader and then writes the report.
+Fast search saves validated run boards below the bundled reference. The board view and manual export can show the run's result while retaining the higher saved record.

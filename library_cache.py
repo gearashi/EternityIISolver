@@ -59,7 +59,9 @@ class LibraryMonitor:
         CREATE INDEX IF NOT EXISTS board_lookup ON boards(local_sha);
         CREATE INDEX IF NOT EXISTS board_pending ON boards(active,has_content,local_sha,score);
         ''');self._db.commit()
-        self._known={r[0] for r in self._db.execute('SELECT local_sha FROM boards WHERE local_sha IS NOT NULL')}
+        self._known=set()  # The indexed SQLite lookup also sees other processes' commits.
+        self._known_count_version = None
+        self._known_count = 0
         self._faces=None;self._last_error=None
         stored=self._meta('canonical_faces')
         if stored:self._set_base(json.loads(stored))
@@ -182,6 +184,24 @@ class LibraryMonitor:
         """Compatibility no-op: missing geometries remain unknown offline."""
         return False
 
+    def register_local_board(self, board, score):
+        """Store a verified solver placement without assigning it a public archive identity."""
+        blob = board_bytes(board)
+        if type(score) is not int or self._score(board) != score:
+            raise ValueError('Local board score does not match the canonical pieces')
+        digest = hashlib.sha256(blob).hexdigest()
+        key = 'local:' + digest
+        with self._lock, self._db:
+            self._db.execute('BEGIN IMMEDIATE')
+            existing = self._db.execute(
+                'SELECT public_sha FROM boards WHERE local_sha=? AND placement=? ORDER BY public_sha LIMIT 1',
+                (digest, blob)).fetchone()
+            if existing is None:
+                self._db.execute(
+                    'INSERT INTO boards(public_sha,score,has_content,active,local_sha,placement) VALUES(?,?,1,0,?,?)',
+                    (key, score, digest, blob))
+        return True if existing and existing[0] != key else None
+
     def is_known(self,board):
         """True=exact saved duplicate; False=absent in complete saved tier; None=unknown."""
         digest=local_board_hash(board)
@@ -205,6 +225,12 @@ class LibraryMonitor:
 
     def status(self):
         with self._lock:
+            # Counting the entire placement index on every dashboard tick slows
+            # a large library. Writes on this connection or elsewhere invalidate it.
+            version = (self._db.total_changes, self._db.execute('PRAGMA data_version').fetchone()[0])
+            if version != self._known_count_version:
+                self._known_count = self._db.execute('SELECT COUNT(DISTINCT local_sha) FROM boards').fetchone()[0]
+                self._known_count_version = version
             total,cached=self._db.execute('SELECT COUNT(*),SUM(local_sha IS NOT NULL) FROM boards WHERE active=1').fetchone()
             tiers={str(score):{'indexed':count,'cached':int(got or 0)} for score,count,got in self._db.execute(
                 'SELECT score,COUNT(*),SUM(local_sha IS NOT NULL) FROM boards WHERE active=1 GROUP BY score ORDER BY score DESC')}
@@ -213,7 +239,7 @@ class LibraryMonitor:
             return {'schema_version':1,'running':False,'network_enabled':False,'mode':'offline',
                 'automatic_polling_enabled':False,'online_freshness_verified':False,
                 'snapshot_stale':True if has_index else None,'indexed_boards':total,
-                'cached_geometries':int(cached or 0),'known_exact_boards':self._db.execute('SELECT COUNT(DISTINCT local_sha) FROM boards').fetchone()[0],'tiers':tiers,
+                'cached_geometries':int(cached or 0),'known_exact_boards':self._known_count,'tiers':tiers,
                 'pending_geometries':total-int(cached or 0),
                 'high_score_indexed':sum(v['indexed'] for s,v in tiers.items() if int(s)>=465),
                 'high_score_cached':sum(v['cached'] for s,v in tiers.items() if int(s)>=465),

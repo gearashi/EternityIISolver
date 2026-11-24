@@ -16,7 +16,7 @@ BOINC-compatible worker development and the GPU DFS port remain **on hold**. Sta
 
 ## Choosing a search
 
-**New in 0.6.1: fast compiled search.** Two engines use a compiled C++ core that tries tens of millions of pieces per second on each CPU thread. Select **Advanced search → Fast compiled search for the highest score** to look for complete boards with as many matching edges as possible, or **Fast compiled DFS for all 480** for a plain exhaustive search, and choose one worker per CPU core. Both continue from their checkpoints after Stop. They are much faster than the Python DFS but apply none of its pruning rules, and neither has solved the puzzle. In a bounded four-thread test they tried about 235 million pieces per second, and the score search found complete boards of 459, 460 and 461 after 1 second, 6 minutes and 20 minutes. All are below the **466/480** reference. [How it works, measurements and limits](docs/FAST_SEARCH.md)
+**Fast compiled search.** Two engines use a compiled C++ core that tries tens of millions of pieces per second on each CPU thread. Select **Advanced search → Fast compiled search for the highest score** to look for complete boards with as many matching edges as possible, or **Fast compiled DFS for all 480** for a plain exhaustive search, and choose one worker per CPU core. Both continue from their checkpoints after Stop. They are much faster than the Python DFS but apply none of its pruning rules, and neither has solved the puzzle. In a bounded four-thread test they tried about 235 million pieces per second, and the score search found complete boards of 459, 460 and 461 after 1 second, 6 minutes and 20 minutes. All are below the **466/480** reference. [How it works, measurements and limits](docs/FAST_SEARCH.md)
 
 To use the neighbor capacity rule that reduced placement attempts in the regional comparison, select **Advanced search → DFS → Maximum filtering + neighbor capacity proofs (experimental) → 1 worker**. Across 24 regions on the 466 reference board, this profile used 6,857 attempts, compared with 6,867 for forced-neighbor proofs. On an independent window of a 465 board, the counts were 13,325 and 13,337. [Search settings and benchmark results](docs/SEARCH_SETTINGS.md)
 
@@ -44,6 +44,13 @@ DFS, SAT, and hybrid use one CPU worker. CP-SAT allows **1–4** workers. The tw
 Native archives include Python and application dependencies, but hardware drivers remain system supplied. Linux builds target the Ubuntu 22.04 runtime baseline and use the host system's `libstdc++` and `libgcc`, so newer GPU drivers load their matching C++ runtime. OpenCL support is conditional on the driver exposing a suitable GPU; normal search does not silently fall back to CPU OpenCL. AMD/Intel users should select **OpenCL** explicitly. Apple has [deprecated OpenCL](https://developer.apple.com/opencl/); macOS builds therefore depend on the runtime still exposed by the target Mac. The macOS archives are not Apple-notarized. Both Mac archives are built and tested natively on macOS 15.
 
 ## Commands
+
+For a Windows **source checkout**, run `scripts\setup_windows_cuda.cmd`, then
+`.venv-cuda\Scripts\python.exe launcher.py open`. Setup uses x64 Python 3.12
+and binary wheels. If only Python 3.15 is installed, it downloads a private
+3.12 interpreter into the checkout. CuPy 14.2.0 and OR-Tools 9.15 lack
+Windows Python 3.15 wheels. The Windows release ZIP includes its own Python,
+the CUDA components and both compiled search helpers.
 
 Use `EternityIISolver.exe` on Windows or `./EternityIISolver` on Linux. For a macOS app archive, the terminal executable is `EternityIISolver.app/Contents/MacOS/EternityIISolver`.
 

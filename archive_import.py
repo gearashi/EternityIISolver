@@ -16,12 +16,13 @@ import math
 import os
 from pathlib import Path
 import sqlite3
+import struct
 import sys
 import uuid
 import zlib
 
-from library_cache import SHA_RE, board_bytes
-from validator import load_bundle, read_pieces, validate_board
+from library_cache import SHA_RE
+from validator import N_PIECES, SIZE, load_bundle, read_pieces
 
 MAX_COMPRESSED = 1024 ** 3
 MAX_EXPANDED = 2 * 1024 ** 3
@@ -89,11 +90,47 @@ def _copy_archive(source, destination, cancel):
     return digest.hexdigest(), size
 
 
+def _archive_scorer(bundle):
+    """Score JSON boards in one pass. Reuse oriented faces and frame masks for the whole file."""
+    edges = bundle.oriented_edges
+    frame = [sum((color == 0) << side for side, color in enumerate(faces)) for faces in edges]
+    required = [(cell < SIZE) | ((cell % SIZE == SIZE - 1) << 1) |
+                ((cell >= N_PIECES - SIZE) << 2) | ((cell % SIZE == 0) << 3)
+                for cell in range(N_PIECES)]
+
+    def score(board):
+        if len(board) != N_PIECES or any(board[cell] != state for cell, state in bundle.fixed_clues.items()):
+            return None
+        used = bytearray(N_PIECES)
+        matches = 0
+        for cell, state in enumerate(board):
+            # json.loads can also produce bool, floats, nested containers or arbitrarily large ints.
+            if type(state) is not int or not 0 <= state < len(edges) or frame[state] != required[cell]:
+                return None
+            piece = state // 4
+            if used[piece]:
+                return None
+            used[piece] = 1
+            up, _, _, left = edges[state]
+            if cell % SIZE:
+                matches += left == edges[board[cell - 1]][1]
+            if cell >= SIZE:
+                matches += up == edges[board[cell - SIZE]][2]
+        return matches
+
+    return score
+
+
 def _prepare(snapshot, stage_path, bundle, cancel, progress):
     counts = Counter()
+    score_board = _archive_scorer(bundle)
+    placement = struct.Struct('<256H')
     rows = expanded = 0
     eof = object()
     with closing(sqlite3.connect(stage_path)) as stage, gzip.open(snapshot, 'rb') as stream:
+        # This unique scratch DB is rebuilt on each attempt. Only the live library needs
+        # durable transactions. Avoid journaling a growing staging index for every batch.
+        stage.execute('PRAGMA journal_mode=OFF')
         stage.execute('CREATE TABLE incoming(public_sha TEXT PRIMARY KEY, score INTEGER NOT NULL, local_sha TEXT NOT NULL, placement BLOB NOT NULL)')
 
         def line():
@@ -135,20 +172,17 @@ def _prepare(snapshot, stage_path, bundle, cancel, progress):
             board = document.get('board')
             if not isinstance(board, list):
                 raise ArchiveImportError('Expected a board array')
-            check = validate_board(board, bundle)
-            if not check['valid'] or check['score'] != score or check['break_count'] != breaks:
+            if score_board(board) != score:
                 raise ArchiveImportError(f'Board rules or score fail on line {rows + 1}')
-            blob = board_bytes(board)
+            blob = placement.pack(*board)
             local_sha = hashlib.sha256(blob).hexdigest()
             try:
                 stage.execute('INSERT INTO incoming VALUES(?,?,?,?)', (sha, score, local_sha, blob))
             except sqlite3.IntegrityError as exc:
                 raise ArchiveImportError('Duplicate public board identifier') from exc
             counts[score] += 1
-            if rows % 1000 == 0:
-                stage.commit()
-                if progress:
-                    progress({'phase': 'validating', 'validated_boards': rows, 'total_boards': total})
+            if rows % 1000 == 0 and progress:
+                progress({'phase': 'validating', 'validated_boards': rows, 'total_boards': total})
         if rows != total:
             raise ArchiveImportError('Archive count does not match its header')
         stage.commit()
@@ -184,6 +218,7 @@ def _merge(cache, stage, private_db, backup, report, bundle, cancel, progress):
 
     with closing(sqlite3.connect(target.as_uri() + ('?mode=rw' if existing else '?mode=rwc'),
                                 uri=True, timeout=30, isolation_level=None)) as db:
+        db.execute('PRAGMA cache_size=-65536')
         db.execute('ATTACH DATABASE ? AS archive_stage', (stage.as_uri() + '?mode=ro',))
         try:
             db.execute('BEGIN IMMEDIATE')
@@ -219,17 +254,27 @@ def _merge(cache, stage, private_db, backup, report, bundle, cancel, progress):
                 ON old.public_sha=new.public_sha WHERE old.public_sha IS NULL''').fetchone()[0]
             filled = db.execute('''SELECT COUNT(*) FROM archive_stage.incoming AS new JOIN boards AS old
                 ON old.public_sha=new.public_sha WHERE old.local_sha IS NULL''').fetchone()[0]
-            db.execute('''INSERT INTO boards(public_sha,score,has_content,active,local_sha,placement)
-                SELECT public_sha,score,1,0,local_sha,placement FROM archive_stage.incoming WHERE 1
-                ON CONFLICT(public_sha) DO UPDATE SET local_sha=excluded.local_sha,
-                placement=excluded.placement,retry_after=0,failures=0''')
+            for start in range(0, report['validated_boards'], 4096):
+                end = min(start + 4096, report['validated_boards'])
+                db.execute('''INSERT INTO boards(public_sha,score,has_content,active,local_sha,placement)
+                    SELECT public_sha,score,1,0,local_sha,placement FROM archive_stage.incoming
+                    WHERE rowid > ? AND rowid <= ?
+                    ON CONFLICT(public_sha) DO UPDATE SET local_sha=excluded.local_sha,
+                    placement=excluded.placement,retry_after=0,failures=0
+                    WHERE boards.local_sha IS NULL''', (start, end))
+                if progress:
+                    progress({'phase': 'merging', 'merged_boards': end, 'total_boards': report['total_boards']})
             base = [[u, r, d, l] for u, d, l, r in bundle.pieces_udlr]
             db.execute('INSERT OR IGNORE INTO metadata VALUES(?,?)',
                        ('canonical_faces', json.dumps(base, separators=(',', ':'))))
-            provenance = {k: report[k] for k in ('archive_sha256', 'generated_at', 'validated_boards', 'archive_path')}
+            provenance = {k: report[k] for k in ('archive_sha256', 'generated_at', 'validated_boards', 'total_boards',
+                                                 'compressed_bytes', 'archive_path')}
+            provenance.update(report.get('http_validators', {}))
+            provenance.update(new_boards=added + filled, already_cached=report['validated_boards'] - added - filled)
             provenance['imported_at'] = datetime.now(timezone.utc).isoformat()
             db.execute('INSERT INTO metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
                        ('last_archive_import', json.dumps(provenance, separators=(',', ':'))))
+            db.execute("DELETE FROM metadata WHERE key='last_archive_failure'")
             total, cached, indexed, active_cached, known = db.execute('''SELECT COUNT(*),
                 COUNT(local_sha),COALESCE(SUM(active),0),COALESCE(SUM(active=1 AND local_sha IS NOT NULL),0),
                 COUNT(DISTINCT local_sha) FROM boards''').fetchone()
@@ -262,7 +307,7 @@ def _merge(cache, stage, private_db, backup, report, bundle, cancel, progress):
 
 
 def import_archive(archive_path, data_dir, *, pieces_path=None, should_cancel=None, on_progress=None,
-                   expected_sha256=None):
+                   expected_sha256=None, http_validators=None):
     """Validate then merge a local gzip JSONL archive; never make network requests.
 
     data_dir contains library.sqlite3. Callbacks run synchronously; cancellation
@@ -299,6 +344,8 @@ def import_archive(archive_path, data_dir, *, pieces_path=None, should_cancel=No
         os.replace(snapshot, archive_copy)
         report.update(archive_sha256=digest, compressed_bytes=size, archive_path=str(archive_copy),
                       archive_became_active_snapshot=False, network_requests=0)
+        if http_validators:
+            report['http_validators'] = http_validators
         if on_progress:
             on_progress({'phase': 'merging', 'validated_boards': report['validated_boards'],
                          'total_boards': report['total_boards'], 'ready_to_commit': False})

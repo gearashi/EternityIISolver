@@ -17,6 +17,37 @@ class BackendUnavailable(RuntimeError):
     pass
 
 
+def _check_windows_cuda_setup():
+    import ctypes
+    if getattr(sys, 'frozen', False):
+        from cuda_bundle import missing_windows_cuda_file
+        missing = missing_windows_cuda_file(sys._MEIPASS)
+        if missing:
+            raise BackendUnavailable(f'Missing CUDA release file: _internal/{missing}. '
+                                     'Extract the complete Windows x64 cuda-opencl zip into a fresh folder.')
+    try:
+        # Load the system driver independently of CuPy and the wheel DLLs.
+        ctypes.WinDLL('nvcuda.dll', winmode=0x00000800)  # LOAD_LIBRARY_SEARCH_SYSTEM32
+    except FileNotFoundError as exc:
+        raise BackendUnavailable('Missing NVIDIA display driver (nvcuda.dll). '
+                                 'Install the NVIDIA display driver for your GPU, then reopen the app.') from exc
+
+
+def _cuda_problem(exc, stage):
+    if isinstance(exc, PermissionError):
+        return f'CUDA could not access {exc.filename or str(exc)}. Check write access to the cache and temporary folders.'
+    if getattr(exc, 'status', None) in (35, 803) or 'UNSUPPORTED_PTX_VERSION' in str(exc).upper():
+        return f'The NVIDIA display driver needs an update for this CUDA runtime. Update the NVIDIA display driver. ({exc})'
+    if isinstance(exc, ImportError):
+        if getattr(sys, 'frozen', False):
+            return f'CUDA module load failed: {exc}. Extract the complete cuda-opencl zip into a fresh folder.'
+        if sys.platform == 'win32' and sys.version_info[:2] >= (3, 15):
+            return ('CuPy 14.2 has no Windows wheel for this Python version. '
+                    r'Use the Windows x64 cuda-opencl zip or run scripts\setup_windows_cuda.cmd.')
+        return f'CUDA module load failed: {exc}. In the active environment run python -m pip install -r requirements-cuda.txt.'
+    return f'CUDA failed while {stage}: {exc}'
+
+
 def default_cache_dir() -> Path:
     if sys.platform == 'win32':
         base = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData/Local'))
@@ -33,13 +64,18 @@ class CudaBackend:
 
     def __init__(self, cache_dir: Path):
         directory = cache_dir / 'cuda'
-        directory.mkdir(parents=True, exist_ok=True)
-        os.environ['CUPY_CACHE_DIR'] = str(directory)
+        stage = 'preparing the CUDA environment'
         try:
+            directory.mkdir(parents=True, exist_ok=True)
+            os.environ['CUPY_CACHE_DIR'] = str(directory)
+            if sys.platform == 'win32':
+                _check_windows_cuda_setup()
             import cupy as cp
+            stage = 'opening the GPU'
             if cp.cuda.runtime.getDeviceCount() < 1:
-                raise BackendUnavailable('CUDA did not report a GPU')
+                raise BackendUnavailable('The NVIDIA display driver reported no CUDA-capable GPU. Check that the GPU is enabled.')
             self.xp = cp
+            stage = 'compiling the CUDA search kernels'
             self.module = cp.RawModule(code=(ROOT / 'kernels.cu').read_text(encoding='utf-8'),
                                        options=('--std=c++17',),
                                        name_expressions=('search_moves', 'test_delta', 'score_boards'))
@@ -51,8 +87,10 @@ class CudaBackend:
             self.device = name.decode() if isinstance(name, bytes) else str(name)
             self.details = {'backend': self.name, 'device': self.device, 'cupy': cp.__version__,
                             'driver_cuda_version': cp.cuda.runtime.driverGetVersion(), 'device_type': 'GPU'}
+        except BackendUnavailable:
+            raise
         except Exception as exc:
-            raise BackendUnavailable(f'CUDA unavailable: {exc}. Install the optional CUDA dependencies and a compatible NVIDIA driver.') from exc
+            raise BackendUnavailable(_cuda_problem(exc, stage)) from exc
 
     def timed(self, kernel, grid, block, args):
         cp = self.xp

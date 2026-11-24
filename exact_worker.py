@@ -214,6 +214,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
     repair_checkpoint_path = None
     bundle = None
     best = None
+    local_library = None
     status = {'state': 'starting', 'pid': os.getpid(), 'method': 'exact',
               'search_method': 'exact-' + engine, 'exact_engine': engine,
               'compute_device': 'CPU', 'gpu': 'CPU exact search', 'workers': workers,
@@ -317,7 +318,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                 status['backend'] = progress['backend'][:80]
 
     def on_improvement(candidate):
-        nonlocal best
+        nonlocal best, local_library
         if not isinstance(candidate, dict):
             raise RuntimeError('Repair backend returned an invalid candidate record')
         board = candidate.get('board')
@@ -325,21 +326,32 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
         if not report['valid'] or type(candidate.get('score')) is not int or report['score'] != candidate['score']:
             raise RuntimeError('Repair candidate failed independent board and score validation')
         with guard:
-            if report['score'] <= status['best_score']:
+            promotes_global = report['score'] > status['best_score']
+            if not promotes_global and engine not in FAST_ENGINES:
                 return
             board = list(board)
             digest = hashlib.sha256(struct.pack('<256H', *board)).hexdigest()
-            known = _known_cached_board(home, board, digest)
+            if engine in FAST_ENGINES:
+                from library_cache import LibraryMonitor
+                if local_library is None:
+                    local_library = LibraryMonitor(home / 'library', pieces_path=bundle.data_dir / 'pieces.txt')
+                known = local_library.register_local_board(board, report['score'])
+            else:
+                known = _known_cached_board(home, board, digest)
             source = 'existing local library arrangement' if known else 'local search result; discovery status unverified'
             record = {'score': report['score'], 'board': board, 'validated': True, 'complete': report['complete'],
                       'library_known': known, 'source': source, 'sha256_uint16le': digest, 'found_at': _now(),
                       'search_method': 'exact-' + engine, 'scope': SCOPE,
                       'project_acceptance_confirmed': False, 'automatic_upload': False}
             (home / 'results').mkdir(exist_ok=True)
-            _atomic_json(home / 'results' / f'{report["score"]}-{digest}.json', record)
-            _atomic_json(runtime / 'best.json', record)
-            best = board
-            status.update(best_score=report['score'], board_source=source, library_known=known)
+            destination = home / 'results' / f'{report["score"]}-{digest}.json'
+            _atomic_json(destination, record)
+            if engine == 'fast-score' and report['score'] > status.get('run_best_score', -1):
+                status.update(run_best_score=report['score'], run_best_sha256=digest)
+            if promotes_global:
+                _atomic_json(runtime / 'best.json', record)
+                best = board
+                status.update(best_score=report['score'], board_source=source, library_known=known)
             save_status()
 
     def heartbeat_loop():
@@ -490,6 +502,7 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                 status['resume_capability'] = 'compiled search checkpoints, one per worker thread'
                 status['compute_device'] = 'CPU compiled search'
                 if engine == 'fast-score':
+                    solve_args.update(on_board=on_improvement, on_improvement=None)
                     status['counter_semantics'] = 'compiled search placements and complete boards under a heuristic break schedule; not an exhaustive search, BOINC nodes or credit'
             checkpoint_path = runtime / ('exact-hybrid-dfs-checkpoint.json' if engine == 'hybrid' else 'exact-dfs-checkpoint.json')
             hint_solution = None
@@ -651,6 +664,8 @@ def run_task(state_dir=None, *, engine='dfs', seconds=None, seed=DEFAULT_SEED, w
                 session['result'] = {key: value for key, value in result.items() if key not in ('board', 'checkpoint')}
             _atomic_json(runtime / 'exact-session.json', session)
         finally:
+            if local_library is not None:
+                local_library.close()
             for sig, previous in old_signals.items():
                 signal.signal(sig, previous)
             lock.close()

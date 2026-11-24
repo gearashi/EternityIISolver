@@ -83,7 +83,7 @@ class ManualArchiveTests(unittest.TestCase):
             self.assertEqual((method,path,body), ('GET', ARCHIVE_PATH, None))
             self.assertEqual(set(headers), {'Accept','Accept-Encoding','User-Agent'})
             self.assertNotIn('?', path)
-            self.assertEqual(status['archive']['phase'], 'complete', status)
+            self.assertEqual(status['archive']['phase'], 'complete' if expected_new else 'unchanged', status)
             self.assertEqual(status['archive']['new_boards'], expected_new)
             self.assertEqual(status['archive']['already_cached'], expected_reused)
             self.assertEqual(status['known_exact_boards'], 1)
@@ -181,7 +181,64 @@ class ManualArchiveTests(unittest.TestCase):
         try:
             self.assertEqual(again.status()['known_exact_boards'],1)
             self.assertEqual(again.status()['network_requests_this_session'],0)
-            self.assertEqual(again.status()['archive']['phase'],'idle')
+            self.assertEqual(again.status()['archive']['phase'],'complete')
+            self.assertEqual(again.status()['archive']['new_boards'],1)
         finally:again.close()
+
+    def test_conditional_refresh_after_restart_does_not_read_or_validate_body(self):
+        self.run_download(Response(self.payload, headers={'ETag': '"snapshot-1"'}))
+        self.manager.close()
+        self.manager = LibraryArchiveManager(self.path, pieces_path=resource_root()/'data/pieces.txt')
+        response = Response(b'', status=304)
+        with patch.object(response, 'read1', side_effect=AssertionError('304 has no body')), \
+             patch('library_download.import_archive', side_effect=AssertionError('already validated')):
+            status, calls = self.run_download(response)
+        self.assertEqual(calls[0][3]['If-None-Match'], '"snapshot-1"')
+        self.assertEqual(status['archive']['phase'], 'unchanged')
+        self.assertEqual(status['archive']['bytes_downloaded'], 0)
+        self.assertEqual(status['known_exact_boards'], 1)
+
+    def test_failed_refresh_never_marks_the_new_validator_as_merged(self):
+        self.run_download(Response(self.payload, headers={'ETag': '"good"'}))
+        failed, _ = self.run_download(Response(b'broken gzip', headers={'ETag': '"bad"'}))
+        self.assertEqual(failed['archive']['phase'], 'error')
+        _, calls = self.run_download(Response(b'', status=304))
+        self.assertEqual(calls[0][3]['If-None-Match'], '"good"')
+        self.assertEqual(self.manager.status()['known_exact_boards'], 1)
+
+    def test_matching_200_response_headers_skip_the_body(self):
+        for generation, headers in enumerate((
+                {'ETag': '"identical"'}, {'Last-Modified': 'Tue, 24 Nov 2026 01:02:03 GMT'}), start=1):
+            with self.subTest(headers=headers):
+                # A new compressed representation initially receives these validators.
+                body = gzip.compress(gzip.decompress(self.payload), mtime=generation)
+                headers = dict(headers, **{'Content-Length': str(len(body))})
+                self.run_download(Response(body, headers=headers))
+                response = Response(body, headers=headers)
+                with patch.object(response, 'read1', side_effect=AssertionError('unnecessary body transfer')):
+                    status, _ = self.run_download(response)
+                self.assertEqual(status['archive']['phase'], 'unchanged')
+                self.assertEqual(status['archive']['bytes_downloaded'], 0)
+
+    def test_identical_200_body_skips_validation_when_no_http_validator_exists(self):
+        self.run_download(Response(self.payload))
+        with patch('library_download.import_archive', side_effect=AssertionError('duplicate validation')):
+            status, calls = self.run_download(Response(self.payload))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(status['archive']['phase'], 'unchanged')
+        self.assertEqual(status['archive']['new_boards'], 0)
+
+    def test_rate_limit_reason_survives_restart_and_next_success_clears_it(self):
+        status, calls = self.run_download(Response(b'', status=429, headers={'Retry-After': '60'}))
+        self.assertEqual(len(calls), 1)
+        self.assertIn('HTTP 429', status['archive']['error'])
+        self.manager.close()
+        self.manager = LibraryArchiveManager(self.path, pieces_path=resource_root()/'data/pieces.txt')
+        self.assertIn('after 60 seconds', self.manager.status()['archive']['error'])
+        self.run_download(Response(self.payload))
+        self.manager.close()
+        self.manager = LibraryArchiveManager(self.path, pieces_path=resource_root()/'data/pieces.txt')
+        self.assertEqual(self.manager.status()['archive']['phase'], 'complete')
+        self.assertIsNone(self.manager.status()['archive']['error'])
 
 if __name__=='__main__':unittest.main(verbosity=2)

@@ -1,4 +1,6 @@
 .venv/
+.venv-cuda/
+.venv-cuda-tools/
 venv/
 __pycache__/
 *.py[cod]

@@ -1,6 +1,6 @@
 # Fast compiled search
 
-Version 0.6.1 adds a compiled C++ search core and two engines that use it. Both run offline on the CPU, keep the five official clues fixed, and are started from **Advanced search** in the dashboard or from the command line.
+The app includes a compiled C++ search core and two engines that use it. Both run offline on the CPU, keep the five official clues fixed, and are started from **Advanced search** in the dashboard or from the command line.
 
 | Engine | Goal | Workers | Stop and restart |
 | --- | --- | --- | --- |
@@ -26,7 +26,7 @@ The core fills the board in row order, left to right and top to bottom. For each
 - *Color depletion.* Three inner colors (2, 18 and 20 in `data/pieces.txt` numbering) must be used up early: at least 80% of their 146 sides within the first 160 cells, most of them in the first rows. Pieces with more of those sides are tried first. This leaves the last rows a piece set with fewer colors to reconcile. The idea is known from earlier public Eternity II solvers; the schedule here was measured on this puzzle.
 - *Restarts.* Each thread reshuffles its candidate order and starts again after 200 million placements, so threads explore unrelated parts of the space.
 
-The engine starts with the loosest budget (22 mismatches, so any complete board scores 458 or more). Whenever it finds a complete board with score S, it tightens the budget so that the next board must score at least S + 1, and continues. The best board of the search is kept in `runtime/fast-score/best.json`, and each new best is also saved under `runtime/fast-score/boards/`. Your saved best board (the 466 reference, or your own better board) is replaced only by a higher score.
+The engine starts with the loosest budget (22 mismatches, so any complete board scores 458 or more). Whenever it finds a complete board with score S, it tightens the budget so that the next board must score at least S + 1, and continues. Every independently validated arrangement is saved under `results/` and registered in the local library. The dashboard and **Export best board** use the best board of the current or most recent fast-score run, including scores below 466. Your overall best (the 466 reference, or your own better board) is replaced only by a higher score.
 
 Depletion and the budget are heuristics. They remove branches that might contain better boards, so a score run never shows that a better board does not exist.
 

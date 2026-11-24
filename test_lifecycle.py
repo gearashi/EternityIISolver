@@ -217,6 +217,15 @@ class FakeEngine:
 
 
 class SolverLifecycleTests(TemporaryStateTest):
+    def test_missing_numpy_remains_visible_in_worker_status(self):
+        with patch.dict(sys.modules, {'numpy': None}):
+            self.assertEqual(self.run_solver('--no-dashboard'), 1)
+        status = self.saved_status()
+        self.assertEqual(status['state'], 'error')
+        self.assertIn('NumPy could not load', status['error'])
+        if sys.platform == 'win32':
+            self.assertIn(r'scripts\setup_windows_cuda.cmd', status['error'])
+
     def setUp(self):
         super().setUp()
         import solver

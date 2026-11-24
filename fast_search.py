@@ -221,13 +221,14 @@ def _run_helper(command, state_dir, seconds, should_stop, tick, poll_seconds):
 
 
 def solve(problem, seconds, seed=1, workers=1, should_stop=None, on_progress=None, *, state_dir, mode='strict',
-          reference=None, on_improvement=None, profile=None, helper=None, prefix=4, poll_seconds=0.25, max_nodes=None):
+          reference=None, on_improvement=None, on_board=None, profile=None, helper=None, prefix=4, poll_seconds=0.25, max_nodes=None):
     """Run the compiled search in state_dir, continuing its checkpoints when present.
 
     Outcomes. strict: solved, infeasible (search tree exhausted), timeout or
     stopped. score: solved, improved or unchanged (the current budget's search
     is exhausted, possible on small puzzles only), timeout or stopped. A score
     run calls on_improvement for each validated board that beats the reference.
+    on_board receives every complete score candidate, including ties and lower scores.
     max_nodes ends the run (as a timeout) once every worker has tried that many
     placements in total; it exists for reproducible tests and benchmarks.
     """
@@ -336,6 +337,28 @@ def solve(problem, seconds, seed=1, workers=1, should_stop=None, on_progress=Non
         budget = loosest
     improved = False
 
+    if on_board is not None and resumed:
+        # Older releases only published improvements above the reference. Recover
+        # their retained boards on resume before continuing the same ladder.
+        for path in sorted((state_dir / 'boards').glob('*.json')):
+            record = _read_json(path)
+            if not isinstance(record, dict) or type(record.get('score')) is not int or score_board(problem, record.get('board')) != record['score']:
+                raise ValueError(f'Invalid retained fast-search board: {path.name}')
+            on_board(record)
+        if prior is not None:
+            on_board({'board': prior[1], 'score': prior[0]})
+
+    def publish_pending():
+        # --keep gives each completion its own file, so two boards arriving
+        # between status polls cannot overwrite one another in best.json.
+        if on_board is not None:
+            for path in state_dir.glob('board_*.json'):
+                candidate = _helper_board(problem, path)
+                if candidate is None:
+                    raise ValueError(f'Unreadable fast-search board: {path.name}')
+                on_board({'board': candidate[1], 'score': candidate[0]})
+                path.unlink()
+
     def take_board():
         nonlocal engine_best, engine_board, reference_score, improved
         found = _helper_board(problem, best_path)
@@ -361,12 +384,15 @@ def solve(problem, seconds, seed=1, workers=1, should_stop=None, on_progress=Non
             extra['engine_best_score'] = engine_best
         ladder_path.write_text(json.dumps(dict(earlier, budget=budget, profile=result['profile'], seed=seed)) + '\n', encoding='utf-8')
         command = base + _profile_arguments(profile, cells, budget)
+        if on_board is not None:
+            command += ['--keep', str(target)]
         if engine_best >= 0:
             command += ['--floor', str(engine_best)]
         if has_saved_search(state_dir):
             command.append('--resume')
 
         def tick(live):
+            publish_pending()
             found = take_board()
             if found:
                 extra['engine_best_score'] = engine_best
@@ -374,6 +400,7 @@ def solve(problem, seconds, seed=1, workers=1, should_stop=None, on_progress=Non
             return found  # a board met this target: end the stage and tighten
 
         code, status = _run_helper(command, state_dir, remaining(), should_stop, tick, poll_seconds)
+        publish_pending()
         take_board()
         if engine_best >= 0:
             extra['engine_best_score'] = engine_best

@@ -10,6 +10,7 @@ import datetime
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 import struct
 import uuid
@@ -141,17 +142,39 @@ def _layout(board, score, attribution):
     return '\n'.join(lines) + '\n'
 
 
+def displayed_candidate(home):
+    """Read the board selected for both the dashboard and manual export."""
+    runtime = home / 'runtime'
+    try:
+        status = _read_document(runtime / 'status.json')
+    except FileNotFoundError:
+        status = {}
+    if status.get('exact_engine') == 'fast-score':
+        score, digest = status.get('run_best_score'), status.get('run_best_sha256')
+        if type(score) is int and 0 <= score <= 480 and isinstance(digest, str) and re.fullmatch('[a-f0-9]{64}', digest):
+            return _read_document(home / 'results' / f'{score}-{digest}.json'), 'run_best'
+        # A pre-upgrade run can already have a valid helper board on disk.
+        score = status.get('engine_best_score')
+        if type(score) is int and 0 <= score <= 480:
+            candidate = _read_document(runtime / 'fast-score' / 'best.json')
+            if candidate.get('claimed_score') != score:
+                raise ExportError('Saved fast-search board differs from its reported score')
+            return dict(candidate, score=score), 'run_best'
+    return _read_document(runtime / 'best.json'), 'runtime_best'
+
+
 def export_best(state_dir, output_dir=None):
     """Validate first, then save three files in a new local export directory."""
     home = state_root(state_dir)
     bundle = load_bundle()
     reference, palette = _reference_palette(bundle)
     try:
-        candidate = _read_document(home / 'runtime' / 'best.json')
+        candidate, source_kind = displayed_candidate(home)
         fallback = False
     except FileNotFoundError:
         candidate = reference
         fallback = True
+        source_kind = 'bundled_reference_fallback'
     board, report = _validated_board(candidate, bundle)
     digest = _local_hash(board)
     exact_reference = tuple(board) == bundle.record_board
@@ -167,7 +190,7 @@ def export_best(state_dir, output_dir=None):
                 'export_purpose': 'manual project review; acceptance unconfirmed',
                 'project_acceptance_confirmed': False, 'completed_cpu_workunit': False,
                 'discovery_status': 'unverified', 'automatic_upload': False,
-                'source_kind': 'bundled_reference_fallback' if fallback else 'runtime_best',
+                'source_kind': source_kind,
                 'matches_bundled_reference': exact_reference, 'attribution': attribution}
     if exact_reference:
         document['discoverer_name'] = reference.get('discoverer_name', 'Jef')

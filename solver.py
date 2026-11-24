@@ -1,12 +1,12 @@
 """Persistent GPU Eternity II search. Stops only on STOP, Ctrl+C, error or 480."""
-import argparse,datetime,hashlib,json,os,signal,sqlite3,threading,time,traceback
+import argparse,datetime,hashlib,json,math,os,signal,sqlite3,threading,time,traceback
+import sys
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from app_paths import resource_root,state_root
 from process_control import RunLock,process_alive
 ROOT=resource_root()
 from validator import load_bundle,validate_board
-import numpy as np
 
 def atomic_json(path,value):
     path=Path(path);tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(value,indent=2),encoding='utf-8')
@@ -15,13 +15,15 @@ def atomic_json(path,value):
         except PermissionError:
             if attempt==5:raise
             time.sleep(.05)
-def digest(board):return hashlib.sha256(np.asarray(board,dtype='<u2').tobytes()).hexdigest()
+def digest(board):
+    import numpy as np
+    return hashlib.sha256(np.asarray(board,dtype='<u2').tobytes()).hexdigest()
 def now():return datetime.datetime.now(datetime.timezone.utc).isoformat()
 def main(argv=None,engine_factory=None):
     p=argparse.ArgumentParser();p.add_argument('--forever',action='store_true');p.add_argument('--seconds',type=float,default=60);p.add_argument('--replicas',type=int,default=4096);p.add_argument('--seed',type=int,default=20261007);p.add_argument('--no-library',action='store_true',help='Skip local cached-board checks; no external networking');p.add_argument('--no-dashboard',action='store_true');p.add_argument('--preserve-stop',action='store_true');p.add_argument('--port',type=int,default=8765);p.add_argument('--backend',choices=['auto','cuda','opencl'],default='auto');p.add_argument('--state-dir',type=Path);a=p.parse_args(argv)
     if not 32<=a.replicas<=32768:raise ValueError('replicas must be32..32768')
     if not 1<=a.port<=65535:raise ValueError('port must be 1..65535')
-    if not np.isfinite(a.seconds) or a.seconds<0:raise ValueError('seconds must be finite and nonnegative')
+    if not math.isfinite(a.seconds) or a.seconds<0:raise ValueError('seconds must be finite and nonnegative')
     home=state_root(a.state_dir);runtime=home/'runtime';runtime.mkdir(parents=True,exist_ok=True);(home/'results').mkdir(exist_ok=True)
     bundle=load_bundle();globalbest=list(bundle.record_board);bestscore=466
     if (runtime/'best.json').exists():
@@ -95,6 +97,16 @@ def main(argv=None,engine_factory=None):
             for sig in (signal.SIGINT,signal.SIGTERM):
                 old_signals[sig]=signal.signal(sig,request_stop)
         atomic_json(runtime/'status.json',status)
+        try:
+            import numpy as np
+        except ImportError as exc:
+            if getattr(sys, 'frozen', False):
+                action = 'Extract the complete release zip into a fresh folder.'
+            elif sys.platform == 'win32':
+                action = r'From the source folder run scripts\setup_windows_cuda.cmd.'
+            else:
+                action = 'Install the source dependencies in your active Python environment.'
+            raise RuntimeError(f'NumPy could not load ({exc}). {action}') from exc
         if not a.no_dashboard:
             try:server=ThreadingHTTPServer(('127.0.0.1',a.port),Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
             except OSError as e:raise RuntimeError(f'Cannot open local dashboard port {a.port}; search was not started: {e}') from e

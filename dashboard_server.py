@@ -326,11 +326,11 @@ class DashboardServer(ThreadingHTTPServer):
         return resolve_exported_file(self.home, request_path)
 
     def board(self):
+        from manual_export import displayed_candidate, _validated_board
         board = self.bundle.record_board
         try:
-            candidate = json.loads((self.runtime / 'best.json').read_text(encoding='utf-8'))['board']
-            if validate_board(candidate, self.bundle)['valid']:
-                board = candidate
+            candidate, _ = displayed_candidate(self.home)
+            board, _ = _validated_board(candidate, self.bundle)
         except (OSError, ValueError, KeyError, TypeError):
             pass
         return {'board': list(board), 'faces': self.bundle.oriented_edges}

@@ -23,6 +23,7 @@ from unittest.mock import patch
 import dashboard_server
 import exact_worker
 import fast_search
+from manual_export import export_best
 from exact_dfs import solve as reference_solve
 from exact_model import check_solution, from_bundle, generated_problem, grid_edges, make_problem
 from validator import load_bundle, validate_board
@@ -258,6 +259,47 @@ class RealHelperTests(TemporaryState):
 
 
 class WorkerWiringTests(TemporaryState):
+    def test_all_fast_candidates_persist_and_run_best_is_displayed_and_exported(self):
+        bundle = load_bundle()
+        boards = []
+        for cell in (17, 18, 19):
+            board = list(bundle.record_board)
+            board[cell] = board[cell] // 4 * 4 + (board[cell] + 1) % 4
+            checked = validate_board(board, bundle)
+            self.assertTrue(checked['valid'])
+            self.assertLess(checked['score'], 466)
+            boards.append({'board': board, 'claimed_score': checked['score']})
+        winner = max(boards, key=lambda b: b['claimed_score'])
+        def helper_run(command, directory, seconds, should_stop, tick, poll_seconds):
+            self.assertIn('--keep', command)
+            if not (directory / 'best.json').exists():
+                for index, record in enumerate(boards):
+                    (directory / f'board_{index}.json').write_text(json.dumps(record))
+                (directory / 'best.json').write_text(json.dumps(winner))
+                tick({})
+            return 3, {'final': True, 'state': 'exhausted'}
+        with patch.object(fast_search, '_run_helper', helper_run), \
+                patch.object(fast_search, 'helper_path', return_value=Path(__file__)), \
+                patch.object(exact_worker, 'peak_memory_mb', return_value=64.0):
+            code = exact_worker.run_task(self.home, engine='fast-score', seconds=120)
+        self.assertEqual(0, code)
+        self.assertEqual(len(boards), len(list((self.home / 'results').glob('*.json'))))
+        global_best = json.loads((self.home / 'runtime' / 'best.json').read_text())
+        self.assertEqual(list(bundle.record_board), global_best['board'])
+        for _ in range(2):
+            with dashboard_server.DashboardServer(self.home, 0) as server:
+                lib = server.status()['library']
+                self.assertEqual(len(boards), lib['known_exact_boards'])
+                self.assertEqual(0, lib['network_requests_this_session'])
+                for record in boards:
+                    self.assertTrue(server.library.is_known(record['board']))
+                displayed = server.board()['board']
+                self.assertEqual(winner['claimed_score'], validate_board(displayed, bundle)['score'])
+                exported = export_best(self.home)
+                document = json.loads(Path(exported['json_path']).read_text())
+                self.assertEqual((displayed, 'run_best'), (document['board'], document['source_kind']))
+                self.assertFalse(exported['used_reference_fallback'])
+
     def test_settings_accept_many_workers_only_for_fast_engines(self):
         for engine in exact_worker.FAST_ENGINES:
             self.assertIn(engine, exact_worker.ENGINES)

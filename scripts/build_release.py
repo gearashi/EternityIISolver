@@ -18,6 +18,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from build_support import resource_files, documentation_files
+from cuda_bundle import check_windows_cuda_archive
 from build_radius_helper import build as build_radius_helper
 from build_fast_helper import build as build_fast_helper
 
@@ -160,6 +161,8 @@ def main():
     base = release / f"EternityIISolver-{version}-{system}-{architecture}-{args.flavor}"
     format_name = "zip" if sys.platform == "win32" else "gztar"
     archive = Path(shutil.make_archive(str(base), format_name, root_dir=ROOT / "dist", base_dir=app_name))
+    if sys.platform == "win32" and args.flavor == "cuda-opencl":
+        check_windows_cuda_archive(archive)
     Path(str(archive) + ".sha256").write_text(sha256(archive) + "  " + archive.name + "\n", encoding="utf-8")
     print(json.dumps({"archive": str(archive), "sha256": sha256(archive), "frozen_smoke_passed": not args.skip_smoke}))
 
