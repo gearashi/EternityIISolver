@@ -24,11 +24,22 @@ DISTRIBUTIONS = ("cupy_cuda12x", "cuda_pathfinder", "nvidia_cuda_runtime_cu12", 
 SEARCH_KERNELS = ("kernels.cu", "fast_score.cu")
 
 
-def missing_windows_cuda_file(root):
+def missing_windows_cuda_file(root, kernel=None):
     """Cheap preflight before loading DLLs or falling back to a host toolkit."""
-    for pattern in CUDA_FILES:
-        if not any(p.is_file() and p.stat().st_size for p in Path(root).glob(pattern)):
+    root = Path(root)
+    for pattern in CUDA_FILES + ((kernel,) if kernel else ()):
+        if not any(p.is_file() and p.stat().st_size for p in root.glob(pattern)):
             return pattern
+    # Pathfinder builds its Windows DLL map from distribution file records.
+    for distribution in DISTRIBUTIONS:
+        pattern = distribution + "-*.dist-info"
+        directory = next((path for path in root.glob(pattern) if path.is_dir()), None)
+        if directory is None:
+            return pattern
+        for name in ("METADATA", "RECORD"):
+            path = directory / name
+            if not path.is_file() or not path.stat().st_size:
+                return path.relative_to(root).as_posix()
     return None
 
 

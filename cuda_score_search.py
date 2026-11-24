@@ -163,7 +163,7 @@ def run_ladder(problem, profile, seed, lanes, started, seconds, cache_dir, on_bo
         from app_paths import dependency_setup_hint
         raise RuntimeError(f'CUDA fast-score dependencies could not load ({exc}). {dependency_setup_hint()}') from exc
 
-    cp = open_cuda(cache_dir)
+    cp = open_cuda(cache_dir, kernel='fast_score.cu')
     try:
         search = Search(problem, profile, lanes, seed)
     except Exception as exc:

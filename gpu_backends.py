@@ -17,11 +17,11 @@ class BackendUnavailable(RuntimeError):
     pass
 
 
-def _check_windows_cuda_setup():
+def _check_windows_cuda_setup(kernel=None):
     import ctypes
     if getattr(sys, 'frozen', False):
         from cuda_bundle import missing_windows_cuda_file
-        missing = missing_windows_cuda_file(sys._MEIPASS)
+        missing = missing_windows_cuda_file(sys._MEIPASS, kernel)
         if missing:
             raise BackendUnavailable(f'Missing CUDA release file: _internal/{missing}. '
                                      'Extract the complete Windows x64 cuda-opencl zip into a fresh folder.')
@@ -58,14 +58,14 @@ def default_cache_dir() -> Path:
     return base / 'EternityIISolver' / 'kernels'
 
 
-def open_cuda(cache_directory):
+def open_cuda(cache_directory, *, kernel):
     """Locate the driver and wheel libraries for any CUDA engine in this worker."""
     stage = 'preparing the CUDA environment'
     try:
         cache_directory.mkdir(parents=True, exist_ok=True)
         os.environ['CUPY_CACHE_DIR'] = str(cache_directory)
         if sys.platform == 'win32':
-            _check_windows_cuda_setup()
+            _check_windows_cuda_setup(kernel)
         import cupy as cp
         stage = 'opening the GPU'
         if cp.cuda.runtime.getDeviceCount() < 1:
@@ -82,7 +82,7 @@ class CudaBackend:
     diagnostic_cpu = False
 
     def __init__(self, cache_dir: Path):
-        cp = open_cuda(cache_dir / 'cuda')
+        cp = open_cuda(cache_dir / 'cuda', kernel='kernels.cu')
         stage = 'compiling the CUDA search kernels'
         try:
             self.xp = cp
